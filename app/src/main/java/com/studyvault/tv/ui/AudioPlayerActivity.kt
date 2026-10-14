@@ -72,15 +72,18 @@ class AudioPlayerActivity : AppCompatActivity() {
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        val exo = ExoPlayer.Builder(this).build()
-        player = exo
-
         val account = AccountStore.current()
         val source = account?.let { SourceFactory.get(it) }
         val factory: DataSource.Factory? = source?.dataSourceFactory()
+
+        // 注意：setMediaSourceFactory 只声明在 ExoPlayer.Builder 上，
+        // ExoPlayer 接口没有这个方法，所以必须在 build() 之前设置。
+        val builder = ExoPlayer.Builder(this)
         if (factory != null) {
-            exo.setMediaSourceFactory(DefaultMediaSourceFactory(factory))
+            builder.setMediaSourceFactory(DefaultMediaSourceFactory(factory))
         }
+        val exo = builder.build()
+        player = exo
 
         exo.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
