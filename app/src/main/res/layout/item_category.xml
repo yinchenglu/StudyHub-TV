@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvNav"
+    android:layout_width="match_parent"
+    android:layout_height="46dp"
+    android:layout_marginBottom="4dp"
+    android:background="@drawable/bg_sidebar_item"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:gravity="center_vertical"
+    android:paddingLeft="14dp"
+    android:paddingRight="14dp"
+    android:textColor="@color/text_secondary"
+    android:textSize="15sp" />

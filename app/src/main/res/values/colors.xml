@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#FF10141A</color>
+    <color name="bg_sidebar">#FF161B22</color>
+    <color name="bg_card">#FF1C232C</color>
+    <color name="bg_topbar">#FF161B22</color>
+    <color name="divider">#FF262E38</color>
+
+    <color name="text_primary">#FFECEFF3</color>
+    <color name="text_secondary">#FF9AA5B1</color>
+    <color name="text_tertiary">#FF6B7683</color>
+
+    <color name="accent">#FF3B8AF3</color>
+    <color name="accent_dim">#FF1E3A5F</color>
+    <color name="danger">#FFE5484D</color>
+    <color name="ok">#FF30A46C</color>
+
+    <color name="focus_border">#FF3B8AF3</color>
+    <color name="transparent">#00000000</color>
+    <color name="scrim">#B3000000</color>
+</resources>

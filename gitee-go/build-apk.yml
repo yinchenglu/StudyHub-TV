@@ -1,0 +1,76 @@
+# ============================================================
+# Gitee Go 流水线配置（Gitee 在线编译 · 方式 B：推代码自动编译）
+# ------------------------------------------------------------
+# 用法：
+#   Gitee 仓库 → 顶部「流水线」→ 开通 Gitee Go（需绑定手机号，免费）
+#   → 新建流水线 → 选「空模板」→ 把本文件内容整段粘进在线编辑器 → 保存
+#
+# 说明：
+#   新版 Gitee Go 的配置以「在线编辑器里的 YAML」为准，
+#   仓库根目录的 .gitee-ci.yml 已不再被读取。所以本文件放在
+#   gitee-go/ 目录下是给你复制粘贴用的，不会自动生效。
+#
+# 提示：
+#   如果你觉得手写 YAML 麻烦，直接在网页表单里填等价内容也行
+#   （表单和 YAML 是同一份配置的两种界面）。
+# ============================================================
+
+version: '1.0'
+
+name: build-apk
+displayName: 编译 APK
+
+# 触发条件：任意分支推代码就自动跑
+triggers:
+  push:
+    branches:
+      include:
+        - .*
+
+stages:
+  - stage:
+      name: compile
+      displayName: 编译打包
+
+      steps:
+        - step: build@gradle
+          name: android_build
+          displayName: Android 构建
+
+          # 本项目硬性要求：JDK 17 + Gradle 8.7
+          # （AGP 8.5.2 要求 Gradle ≥ 8.7 且必须 JDK 17，选低了会直接报错）
+          jdkVersion: 17
+          gradleVersion: 8.7
+
+          commands:
+            - set -e
+
+            # ---- 环境体检：第一次跑请认真看这段日志 ----
+            # 目的：确认构建机里有没有 Android SDK、版本够不够 compileSdk 34。
+            # 编通之后这几行可以删掉，省构建时长。
+            - echo "===== JDK ====="
+            - java -version 2>&1 | head -3
+            - echo "===== Android SDK ====="
+            - echo "ANDROID_HOME=${ANDROID_HOME:-（空）}"
+            - echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-（空）}"
+            - ls -d /opt/android* /usr/lib/android-sdk /root/android-sdk /usr/local/android-sdk 2>/dev/null || echo "常见路径下没找到 Android SDK"
+            - ls ${ANDROID_HOME:-/opt/android-sdk}/platforms 2>/dev/null || echo "（读不到 platforms 目录）"
+            - ls ${ANDROID_HOME:-/opt/android-sdk}/build-tools 2>/dev/null || echo "（读不到 build-tools 目录）"
+
+            # ---- 真正编译 ----
+            - echo "===== 开始构建 ====="
+            - chmod +x ./gradlew
+            - ./gradlew assembleDebug --no-daemon --stacktrace
+
+          # 把产物收集成「制品」，构建完在流水线页面的制品区下载
+          artifacts:
+            - name: BUILD_ARTIFACT
+              path:
+                - app/build/outputs/apk/debug
+
+        # 上传制品，方便在网页上直接点击下载
+        - step: publish@general_artifacts
+          name: upload_artifacts
+          displayName: 上传 APK
+          dependArtifact: BUILD_ARTIFACT
+          artifactName: StudyHub-TV-APK

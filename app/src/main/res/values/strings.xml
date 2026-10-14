@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StudyHub-TV</string>
+
+    <string name="title_server_list">选择服务器</string>
+    <string name="title_add_server">添加服务器</string>
+    <string name="title_edit_server">编辑服务器</string>
+    <string name="title_settings">设置</string>
+
+    <string name="btn_add_server">添加服务器</string>
+    <string name="btn_save">保存</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_delete">删除</string>
+    <string name="btn_test">测试连接</string>
+    <string name="btn_switch_account">切换账号</string>
+
+    <string name="hint_no_server">还没有服务器，点「添加服务器」开始</string>
+    <string name="hint_empty_dir">这个文件夹是空的</string>
+    <string name="hint_pick_category">请在左侧选择分类</string>
+    <string name="hint_category_missing">没找到对应的文件夹，可以到「全部文件」里手动找</string>
+
+    <string name="label_protocol">协议</string>
+    <string name="label_name">名称</string>
+    <string name="label_host">服务器地址</string>
+    <string name="label_port">端口</string>
+    <string name="label_share">共享名</string>
+    <string name="label_root">起始目录</string>
+    <string name="label_username">用户名</string>
+    <string name="label_password">密码</string>
+    <string name="label_https">使用 HTTPS</string>
+
+    <string name="cat_image">图片</string>
+    <string name="cat_video">视频</string>
+    <string name="cat_audio">音频</string>
+    <string name="cat_movie">电影</string>
+    <string name="cat_tvshow">电视剧</string>
+    <string name="cat_all">全部文件</string>
+    <string name="cat_settings">设置</string>
+
+    <string name="tips_remote">OK 打开 · 返回 上一级 · 菜单 排序/切换账号 · 方向键 移动</string>
+</resources>
