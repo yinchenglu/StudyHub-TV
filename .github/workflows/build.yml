@@ -95,8 +95,10 @@ jobs:
           ls -lh dist
 
           # 注意：heredoc 用未加引号的 EOF（需要展开 ${TAG}），
-          # 因此正文里绝不能出现 ${{ }} 表达式——bash 会把它当参数展开并报
-          # "bad substitution"。这里一律使用运行器的环境变量 $GITHUB_RUN_NUMBER / $GITHUB_SHA。
+          # 因此正文里绝不能出现 Actions 的美元双花括号表达式语法——
+          # 它的扫描器不认 shell 注释，会逐字符扫 run 正文，连注释里的
+          # 该语法也算表达式，从而报 "An expression was expected" 而整个工作流拒绝启动。
+          # 这里一律使用运行器的环境变量 $GITHUB_RUN_NUMBER / $GITHUB_SHA。
           cat > dist/NOTES.md <<EOF
           ## StudyHub-TV ${TAG}
 
