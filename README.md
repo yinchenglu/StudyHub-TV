@@ -103,7 +103,16 @@ git push -u origin main
    > 密码那一步要填 **Personal Access Token**（GitHub 头像 → Settings → Developer settings →
    > Personal access tokens → Tokens (classic) → 勾 `repo` → 生成），不是账号密码。
 3. 推上去后点顶部 **Actions** 标签，等黄色圆点变**绿色对勾**（约 3~6 分钟）
-4. 点进任务，页面底部 **Artifacts** 下载 **StudyHub-TV-APK**
+
+**下载 APK 有两个地方，注意区别：**
+
+| 位置 | 路径 | 特点 |
+|---|---|---|
+| **Releases**（推荐） | 仓库首页右侧 **Releases** → `v1.0.0` | 免登录直接点下载，长期有效、不会过期 |
+| Actions Artifacts | 任务页面底部 **Artifacts** → `StudyHub-TV-APK` | 需登录，**90 天后自动过期**，只适合自己临时取用 |
+
+> 编译流程里已经带了一步「发布到 Release」，每次推送都会自动把 APK 覆盖到 `v1.0.0`，
+> 所以 Releases 页面**永远是最新的包**，不用手动上传。
 
 > 如果显示**红色叉**，点进去把报错的红色文字发我，我来修。
 

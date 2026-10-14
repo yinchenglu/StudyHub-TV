@@ -10,6 +10,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # 发布 Release 需要写权限（默认 GITHUB_TOKEN 是只读的）
+    permissions:
+      contents: write
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -69,3 +73,57 @@ jobs:
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      # 说明：Actions 的 Artifacts 与 Releases 是两套体系，
+      # 只上传 artifact 的话 Releases 页面永远是空的（artifact 需要登录才能下载，
+      # 且默认 90 天后过期）。这里额外把 APK 发布到 Release 作为长期下载入口。
+      # 使用运行器预装的 gh CLI，不引入第三方 Action。
+      - name: 发布到 Release（长期下载入口）
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+          [ -z "$VERSION" ] && VERSION="1.0.0"
+          TAG="v$VERSION"
+          echo "版本号: $VERSION  →  tag: $TAG"
+
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/StudyHub-TV-${TAG}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk     "dist/StudyHub-TV-${TAG}-debug.apk"
+          ls -lh dist
+
+          # 注意：heredoc 用未加引号的 EOF（需要展开 ${TAG}），
+          # 因此正文里绝不能出现 ${{ }} 表达式——bash 会把它当参数展开并报
+          # "bad substitution"。这里一律使用运行器的环境变量 $GITHUB_RUN_NUMBER / $GITHUB_SHA。
+          cat > dist/NOTES.md <<EOF
+          ## StudyHub-TV ${TAG}
+
+          由 GitHub Actions 自动构建。
+          - 运行编号：#${GITHUB_RUN_NUMBER}
+          - 提交：${GITHUB_SHA}
+
+          | 文件 | 说明 |
+          |---|---|
+          | \`StudyHub-TV-${TAG}-release.apk\` | 推荐安装，体积小 |
+          | \`StudyHub-TV-${TAG}-debug.apk\` | 调试版 |
+
+          两个包均已签名，可直接安装。
+          最低 Android 5.0（API 21），纯 Java/Kotlin 实现，全 CPU 架构通用。
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，覆盖其中的 APK"
+            gh release upload "$TAG" dist/*.apk --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --notes-file dist/NOTES.md --repo "$GITHUB_REPOSITORY"
+          else
+            echo "创建 Release $TAG"
+            gh release create "$TAG" dist/*.apk \
+              --title "StudyHub-TV $TAG" \
+              --notes-file dist/NOTES.md \
+              --target "$GITHUB_SHA" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+          echo "✔ Release 页面：https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
