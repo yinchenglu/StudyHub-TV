@@ -20,18 +20,43 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
+      # 注意：这里刻意不使用 android-actions/setup-android@v3。
+      # 该 Action 内部会执行 `sdkmanager tools` 安装 legacy tools 包，
+      # 而 Google 已将该包从 SDK 仓库移除，导致它在 2026 年已无法使用
+      # （报错：Failed to find package 'tools'，退出码 1）。
+      # ubuntu-latest 运行器本身已预装 Android SDK，直接用它即可。
       - name: 安装编译所需的 SDK 组件
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          set -e
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "SDK 根目录: $SDK_ROOT"
+
+          SDKMGR="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMGR" ]; then
+            SDKMGR=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$SDKMGR" ] || [ ! -x "$SDKMGR" ]; then
+            echo "::error::找不到 sdkmanager，构建机结构可能变了"
+            ls -R "$SDK_ROOT" 2>/dev/null | head -60
+            exit 1
+          fi
+          echo "sdkmanager: $SDKMGR"
+
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+          echo "sdk.dir=$SDK_ROOT" > local.properties
+          echo "已写入 local.properties：$(cat local.properties)"
 
       - name: 配置 Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+
+      - name: 打印工具链版本（便于排错）
+        run: |
+          java -version
+          gradle --version
 
       - name: 编译 Debug 与 Release APK
         run: gradle assembleDebug assembleRelease --stacktrace
