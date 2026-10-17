@@ -131,14 +131,16 @@ class _AccountEditFormState extends State<AccountEditForm> {
         _ok = msg;
         _busy = false;
       });
-      await widget.app.saveAccount(a);
-      if (!mounted) return;
-      widget.onDone(a);
+      // 先弹提示再回调父级：onDone 会把本表单从树上摘下来，
+      // 摘完再用 context 找 ScaffoldMessenger 就会报 deactivated widget
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text('已保存并连接：$msg'),
             duration: const Duration(seconds: 3)),
       );
+      await widget.app.saveAccount(a);
+      if (!mounted) return;
+      widget.onDone(a);
     } catch (e) {
       if (tmp != null) {
         try {

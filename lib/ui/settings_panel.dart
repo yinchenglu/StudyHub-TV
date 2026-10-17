@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/fmt.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
+import '../data/thumb_cache.dart';
 import '../state/app_state.dart';
 import 'list_panel.dart';
 
@@ -98,6 +100,24 @@ class SettingsPanel extends StatelessWidget {
           app.updateSetting(() => s.setSlideshowSec(next));
         },
       ),
+      TvListItem(
+        title: '连接测试',
+        subtitle: '检查账号、目录权限，以及视频能不能拖进度条',
+        icon: Icons.network_check_rounded,
+        onTap: () => _test(context),
+      ),
+      TvListItem(
+        title: '清理缩略图缓存',
+        subtitle: '视频封面缓存在电视本地，删掉不影响服务器',
+        icon: Icons.cleaning_services_outlined,
+        onTap: () => _cleanThumbs(context),
+      ),
+      TvListItem(
+        title: '关于 / 诊断信息',
+        subtitle: '版本号、当前协议、地址（发给别人求助时用）',
+        icon: Icons.info_outline,
+        onTap: () => _about(context),
+      ),
     ];
 
     return TvListPanel(
@@ -107,8 +127,70 @@ class SettingsPanel extends StatelessWidget {
       focusNode: focusNode,
       onRequestMenu: onRequestMenu,
       footer: const Text(
-        '缩略图缓存可以在「工具 → 清理缓存」里一次性删掉。',
+        '内存和缓存的清理在「工具 → 内存清理」里。',
         style: TextStyle(fontSize: 13, color: TvColors.textDim),
+      ),
+    );
+  }
+
+  void _toast(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+    );
+  }
+
+  Future<void> _test(BuildContext context) async {
+    final src = app.source;
+    if (src == null) {
+      _toast(context, '还没连上服务器，先去「账户」检查地址和密码');
+      return;
+    }
+    _toast(context, '正在测试…');
+    try {
+      final msg = await src.check();
+      if (!context.mounted) return;
+      _toast(context, msg);
+    } catch (e) {
+      if (!context.mounted) return;
+      _toast(context, '测试失败：$e');
+    }
+  }
+
+  Future<void> _cleanThumbs(BuildContext context) async {
+    final before = await ThumbCache.instance.usage();
+    await app.clearThumbs();
+    if (!context.mounted) return;
+    _toast(context,
+        '已清理缩略图缓存：${before.$2} 个文件、${fmtBytes(before.$1)}');
+  }
+
+  void _about(BuildContext context) {
+    final a = app.account;
+    final lines = [
+      '版本：v$kAppVersion',
+      '当前账号：${a?.name ?? '无'}',
+      '协议：${a?.proto.label ?? '-'}',
+      '地址：${a?.summary ?? '-'}',
+      '状态：${app.connected ? '已连接' : '未连接'}',
+      '',
+      kRepoUrl,
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TvColors.panel,
+        title: const Text('关于 StudyHub TV'),
+        content: SelectableText(
+          lines.join('\n'),
+          style: const TextStyle(fontSize: 14, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
       ),
     );
   }

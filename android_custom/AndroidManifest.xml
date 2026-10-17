@@ -14,6 +14,20 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!--
+      工具 → 应用管理：要列出电视上装了什么。
+      安卓 11（API 30）起有"软件包可见性"限制，不声明这一条，
+      getInstalledApplications 只会返回自己和很少几个系统应用，
+      列表里就只剩一堆空白。
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!--
+      工具 → 文件管理里点 APK 要能弹安装器。
+      安卓 8 起装外来 APK 必须声明这一条，否则 startActivity 静默失败。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!--
       电视适配的三条关键声明：
         1. leanback required=false —— 声明"我能在电视上用"，但不强制要求电视环境
            （这样同一份 APK 也能装在手机 / 平板上，方便调试）
@@ -78,5 +92,23 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!--
+          给「文件管理」里"用系统应用打开"用。
+
+          安卓 7（API 24）以后把 file:// 地址交给别的应用会直接抛
+          FileUriExposedException，所以下载好的 APK 想装、视频想投给系统播放器，
+          都必须先经 FileProvider 换成 content:// 再带临时读权限发出去。
+          paths 见 res/xml/file_paths.xml。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

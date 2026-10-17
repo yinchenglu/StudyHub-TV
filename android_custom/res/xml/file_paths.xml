@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 能对外暴露哪些目录。
+
+  只需要覆盖「工具 → 软件下载」的落盘位置：
+    /storage/emulated/0/Android/data/<包名>/files/StudyHubTV
+
+  external-files-path 正好是 getExternalFilesDir() 那块，
+  files-path / cache-path 备用（有些机型 getExternalStorageDirectory
+  拿不到时会退回内部目录）。不放开 external-path（整张 sdcard）——
+  能少给一个目录就少给一个。
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path name="ext_files" path="." />
+    <files-path name="files" path="." />
+    <cache-path name="cache" path="." />
+</paths>

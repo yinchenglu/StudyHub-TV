@@ -11,10 +11,11 @@ import '../state/app_state.dart';
 import 'keys.dart';
 import 'tv_widgets.dart';
 
-/// 「工具 → 下载工作」
+/// 「工具 → 软件下载」
 ///
 /// 看的是服务器上 `StudyHub-TV/download` 里的东西：可以进子目录，
 /// 选中文件按 OK 就把它下到电视本地（应用专属目录，不要权限）。
+/// 下完想装 APK 或者删掉腾空间，去「工具 → 文件管理」。
 ///
 /// 为什么不做后台下载队列：
 ///   电视的内存和存储都很紧，同时下三个只会三个都下不完。
@@ -281,7 +282,7 @@ class _DownloadPageState extends State<DownloadPage> {
             tooltip: '返回工具',
           ),
           const SizedBox(width: 6),
-          const Text('下载工作',
+          const Text('软件下载',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(width: 16),
           Expanded(

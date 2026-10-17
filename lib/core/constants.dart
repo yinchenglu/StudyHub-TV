@@ -3,17 +3,20 @@ library;
 
 const String kAppName = 'StudyHub TV';
 
-/// 界面左下角「工具 → 关于」里显示的版本
-const String kAppVersion = '1.2.0';
+/// 界面左下角「设置 → 关于」里显示的版本
+const String kAppVersion = '1.3.0';
 
 /// pubspec.yaml 里的 version（去掉 +N 后要和上面一致）
-const String kPubspecVersion = '1.2.0+2004';
+const String kPubspecVersion = '1.3.0+2005';
 
 /// 项目主页（「关于」里点一下会提示这个地址）
 const String kRepoUrl = 'https://github.com/yinchenglu/StudyHub-TV';
 
 /// 原生抽帧通道名（对应 android_custom/MainActivity.kt）
 const String kThumbChannel = 'studyhubtv/thumb';
+
+/// 原生系统能力通道（应用管理 / 内存 / 打开文件 / 自启动）
+const String kSystemChannel = 'studyhubtv/system';
 
 /// ---------------------------------------------------------------
 /// 媒体库目录约定（v1.2 起自动识别，不需要用户手填）
