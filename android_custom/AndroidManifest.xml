@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  StudyHub TV 的 Android 清单。
+  用法：CI 里先用 flutter create 生成骨架，再用本文件覆盖
+        android/app/src/main/AndroidManifest.xml
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 连自己的 NAS：必需 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 播放时别让电视熄屏 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+      电视适配的三条关键声明：
+        1. leanback required=false —— 声明"我能在电视上用"，但不强制要求电视环境
+           （这样同一份 APK 也能装在手机 / 平板上，方便调试）
+        2. touchscreen required=false —— 电视没有触摸屏，不声明的话
+           部分电视的应用市场 / 安装器会直接判定"不兼容"
+        3. banner —— 安卓 TV 桌面（Leanback Launcher）显示的是横幅图，
+           不给的话桌面上是一块灰底文字，很难看
+    -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="StudyHub TV"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
+        android:usesCleartextTraffic="true">
+
+        <!--
+          usesCleartextTraffic=true 是必须的，不是偷懒：
+            * 自建 NAS 的 WebDAV 绝大多数是 http（群晖 5005、Alist 5244）
+            * SMB 播放走的是应用内的 127.0.0.1 中转服务，也是明文 http
+          关掉这一项，这两条链路都会直接断。
+
+          注意：不要在这个清单里写 android:extractNativeLibs。
+          新版 AGP 会报错，要求改成 Gradle 里的 jniLibs.useLegacyPackaging，
+          而 media_kit 的 libmpv 必须解压到文件系统才能加载 ——
+          该设置由 CI 注入（见 .github/workflows/build-apk.yml）。
+        -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
+            <!-- 普通启动入口（手机上也能装，方便调试） -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 电视桌面入口：有了这一条才会出现在安卓 TV 的应用列表里 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>

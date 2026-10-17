@@ -1,0 +1,50 @@
+name: studyhub_tv
+description: StudyHub TV —— 装在电视上，用遥控器看自己 NAS 里的图片、视频和音乐
+publish_to: 'none'
+
+# 版本号规则和 StudyHub 一致：+N 是基础 versionCode，
+# --split-per-abi 会再加偏移（armeabi-v7a +1000，arm64-v8a +2000）。
+# 所以 v1.0.0+1 出两个包：versionCode 1001 / 2001。
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 网络：WebDAV 的 PROPFIND / Range 请求都靠它
+  dio: ^5.7.0
+  # 解析 WebDAV 返回的 XML 目录清单
+  xml: ^7.0.1
+
+  # 本地存储：账号信息、设置
+  shared_preferences: ^2.3.2
+  # 密码单独加密存（Android 走 Keystore），失败会自动退回普通存储
+  flutter_secure_storage: ^9.2.2
+  # 缩略图磁盘缓存目录
+  path_provider: ^2.1.4
+  # 缩略图文件名用 md5（路径里有中文和 /，不能直接当文件名）
+  crypto: ^3.0.5
+
+  # 图片磁盘缓存 + 带 Basic Auth 请求头加载
+  cached_network_image: ^3.4.1
+
+  # 万能播放器内核（libmpv）：mkv / avi / ts / rmvb 都可能放得动。
+  # 上面两个是 Dart 侧，下面那个只提供安卓原生解码库，代码里不 import 但绝不能删。
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_android_video: ^1.3.6
+
+  # SMB / CIFS 客户端，纯 Dart 实现（SMB 1.0 / 2.0 / 2.1）。
+  # 选它的原因见 README「为什么 SMB 用纯 Dart 方案」。
+  smb_connect: ^0.0.9
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  # 本项目没有图片资源文件：图标是矢量/生成的原生资源，
+  # 界面上的图标全部用 Material Icons（随包内置，不额外占体积）。

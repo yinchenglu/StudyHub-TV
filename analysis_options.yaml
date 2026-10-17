@@ -1,0 +1,7 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # 这个项目是自用工具，注释比"整洁"更重要，关掉几条噪音规则
+    avoid_print: false
+    prefer_const_constructors: false

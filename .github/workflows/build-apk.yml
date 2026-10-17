@@ -1,0 +1,278 @@
+name: 编译 APK
+
+# 触发方式：
+#   1. push 到 main 分支
+#   2. 推送 v 开头的标签（例：git tag v1.0.1 && git push origin v1.0.1）→ 会额外发一个 GitHub Release
+#   3. 网页上手动 Run workflow
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Flutter 版本锁死 3.47.6（和 StudyHub 用同一个）：
+      #   media_kit 系插件要求 compileSdk 36，只有新版 Flutter 才带；
+      #   锁死版本可避免上游升级带来的意外断裂。
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # ------------------------------------------------------------------
+      # 生成 Android 骨架
+      #
+      # 为什么不在仓库里放整个 android/ 目录：
+      #   gradle-wrapper.jar 等二进制放进 git 会让仓库变脏，
+      #   而且 flutter create 生成的骨架和 Flutter 版本是配套的 ——
+      #   每次 CI 现场生成，永远和构建用的 Flutter 版本一致。
+      # ------------------------------------------------------------------
+      - name: 生成 Android 骨架并注入自定义内容
+        run: |
+          set -e
+          flutter create \
+            --org com.yinchenglu \
+            --platforms=android \
+            --project-name studyhub_tv \
+            /tmp/skeleton
+
+          rm -rf android
+          cp -r /tmp/skeleton/android ./android
+          cp /tmp/skeleton/.metadata ./.metadata
+
+          # ---------- 1. 清单（电视适配 + 允许 http 都在这里） ----------
+          cp android_custom/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+
+          # ---------- 2. 图标 + 电视横幅 ----------
+          # 逐文件按相对路径覆盖（不能 cp -r 整目录，见 StudyHub 的教训）
+          ICON_N=$(find android_custom/res -type f | wc -l)
+          if [ "$ICON_N" -lt 6 ]; then
+            echo "!!! 图标资源缺失（应有 5 个 ic_launcher + 1 个 tv_banner），只找到 $ICON_N 个"
+            exit 1
+          fi
+          find android_custom/res -type f | while IFS= read -r f; do
+            rel="${f#android_custom/res/}"
+            mkdir -p "android/app/src/main/res/$(dirname "$rel")"
+            cp -f "$f" "android/app/src/main/res/$rel"
+          done
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || { echo "!!! 图标没拷上"; exit 1; }
+          test -f android/app/src/main/res/drawable-xhdpi/tv_banner.png || { echo "!!! 电视横幅没拷上"; exit 1; }
+
+          # ---------- 3. Gradle 注入：jniLibs.useLegacyPackaging = true ----------
+          #   media_kit 的 libmpv .so 必须解压到文件系统才能加载；
+          #   AGP 8 默认不解压，不改这里运行时直接崩。
+          #   插入位置：buildTypes 块前面（android{} 的直接子块，位置合法；
+          #   不能插到文件尾，android{} 后面还有 flutter{} / dependencies{}）。
+          #   minSdk 不动：本项目依赖里最挑剔的 media_kit 只要 21，
+          #   模板默认值就是它，强行抬到 24 反而会淘汰一批老盒子。
+          python3 - <<'PY'
+          import glob
+          path = (glob.glob("android/app/build.gradle.kts") + glob.glob("android/app/build.gradle"))[0]
+          src = open(path, encoding="utf-8").read()
+
+          if "useLegacyPackaging" in src:
+              print("useLegacyPackaging 已存在，跳过")
+          else:
+              block = (
+                  "packaging {\n"
+                  "    jniLibs { useLegacyPackaging = true }\n"
+                  "}\n"
+                  "\n"
+              )
+              assert "buildTypes {" in src, "模板里找不到 buildTypes 块"
+              src = src.replace("buildTypes {", block + "buildTypes {", 1)
+              open(path, "w", encoding="utf-8").write(src)
+              print("已注入 useLegacyPackaging = true")
+          PY
+
+          grep -nE "useLegacyPackaging|MIN_SDK_BUMP_24|minSdk" android/app/build.gradle* | head -5
+
+          # ---------- 4. MainActivity（视频抽帧通道） ----------
+          SKEL_MA=$(find android/app/src/main -name "MainActivity.kt" | head -1)
+          if [ -z "$SKEL_MA" ]; then
+            echo "!!! 找不到骨架 MainActivity.kt"
+            exit 1
+          fi
+          ACTUAL_PKG=$(grep -m1 '^package ' "$SKEL_MA" | sed -e 's/^package[[:space:]]*//' -e 's/[;[:space:]]*$//')
+          echo "MainActivity 包名：$ACTUAL_PKG"
+          sed "s/^package __PACKAGE__/package $ACTUAL_PKG/" \
+            android_custom/MainActivity.kt > "$SKEL_MA"
+          grep -nE "^package |studyhubtv/thumb" "$SKEL_MA" || { echo "!!! MainActivity 注入失败"; exit 1; }
+          if grep -q "__PACKAGE__" "$SKEL_MA"; then
+            echo "!!! 包名占位符没被替换掉"; exit 1
+          fi
+
+      # ------------------------------------------------------------------
+      # 固定签名（可选）
+      #
+      # 不配 Secrets 也能出包（退回 debug 签名），但那种包**不能覆盖安装**，
+      # 每次升级都要先卸载重装。想固定签名：仓库 Settings → Secrets → Actions 加：
+      #   SIGNING_KEYSTORE_BASE64  keytool 生成的 keystore 的 base64
+      #   SIGNING_STORE_PASSWORD   keystore 密码
+      #   SIGNING_KEY_ALIAS        别名
+      #   SIGNING_KEY_PASSWORD     key 密码
+      # 具体命令见 README「签名」一节。
+      # ------------------------------------------------------------------
+      - name: 注入固定签名
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "::warning::没配 SIGNING_KEYSTORE_BASE64，本包用 debug 签名（不能覆盖安装）"
+            echo "SIGN_NOTE=⚠️ 本次 APK 用临时 debug 密钥签名，不能覆盖安装" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$SIGNING_STORE_PASSWORD
+          keyPassword=$SIGNING_KEY_PASSWORD
+          keyAlias=$SIGNING_KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
+          # 把签名配置写进 build.gradle（kts / groovy 两种模板都处理）。
+          # 三步：文件头加 Properties 读取 → buildTypes 前注册 release 签名 →
+          # 把模板自带的 debug 签名行替换掉。
+          # 不往文件尾部插块 —— android{} 不是最后一个块，尾部插入必错。
+          python3 - <<'PY'
+          import glob
+          path = (glob.glob("android/app/build.gradle.kts") + glob.glob("android/app/build.gradle"))[0]
+          src = open(path, encoding="utf-8").read()
+          kts = path.endswith(".kts")
+
+          if kts:
+              imports = (
+                  "import java.util.Properties\n"
+                  "import java.io.FileInputStream\n"
+                  "\n"
+              )
+              header = (
+                  "val keystoreProperties = Properties()\n"
+                  "val keystorePropertiesFile = rootProject.file(\"key.properties\")\n"
+                  "if (keystorePropertiesFile.exists()) {\n"
+                  "    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n"
+                  "}\n"
+                  "\n"
+              )
+              cfg = (
+                  "\n"
+                  "signingConfigs {\n"
+                  "    create(\"release\") {\n"
+                  "        keyAlias = keystoreProperties[\"keyAlias\"] as String\n"
+                  "        keyPassword = keystoreProperties[\"keyPassword\"] as String\n"
+                  "        storeFile = file(keystoreProperties[\"storeFile\"] as String)\n"
+                  "        storePassword = keystoreProperties[\"storePassword\"] as String\n"
+                  "    }\n"
+                  "}\n"
+                  "\n"
+              )
+              old_line = 'signingConfig = signingConfigs.getByName("debug")'
+              new_line = 'signingConfig = signingConfigs.getByName("release")'
+          else:
+              imports = (
+                  "import java.util.Properties\n"
+                  "import java.io.FileInputStream\n"
+                  "\n"
+              )
+              header = (
+                  "def keystoreProperties = new Properties()\n"
+                  "def keystorePropertiesFile = rootProject.file('key.properties')\n"
+                  "if (keystorePropertiesFile.exists()) {\n"
+                  "    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))\n"
+                  "}\n"
+                  "\n"
+              )
+              cfg = (
+                  "\n"
+                  "signingConfigs {\n"
+                  "    release {\n"
+                  "        keyAlias keystoreProperties['keyAlias']\n"
+                  "        keyPassword keystoreProperties['keyPassword']\n"
+                  "        storeFile file(keystoreProperties['storeFile'])\n"
+                  "        storePassword keystoreProperties['storePassword']\n"
+                  "    }\n"
+                  "}\n"
+                  "\n"
+              )
+              old_line = "signingConfig signingConfigs.debug"
+              new_line = "signingConfig signingConfigs.release"
+
+          assert "buildTypes {" in src, "模板里找不到 buildTypes 块"
+          assert old_line in src, "模板里找不到 debug 签名行（模板可能变了）"
+          # groovy 的 def 声明和 import 都能放文件头；kts 的 imports 必须在最前、
+          # 但 val 声明不能跑到 plugins{} 前面 —— 所以 kts 拆成两段插。
+          if kts:
+              src = imports + src
+              assert "android {" in src
+              src = src.replace("android {", header + "android {", 1)
+          else:
+              src = imports + header + src
+          src = src.replace("buildTypes {", cfg + "buildTypes {", 1)
+          src = src.replace(old_line, new_line, 1)
+          open(path, "w", encoding="utf-8").write(src)
+          print("签名配置已写入", path)
+          PY
+          echo "SIGN_NOTE=✅ 已用固定密钥签名，可直接覆盖安装" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------
+      - name: 构建 APK（arm64 + armv7）
+        run: |
+          set -e
+          flutter pub get
+          flutter build apk --release --split-per-abi
+
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/StudyHub-TV-arm64.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/StudyHub-TV-armv7.apk
+          ls -la dist/
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: StudyHub-TV-APK
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: 发布 Release（推 v 标签时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          body: |
+            ${{ env.SIGN_NOTE }}
+
+            安装方法见仓库 README。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
