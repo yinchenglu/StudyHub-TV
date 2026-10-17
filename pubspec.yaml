@@ -16,8 +16,10 @@ dependencies:
 
   # 网络：WebDAV 的 PROPFIND / Range 请求都靠它
   dio: ^5.7.0
-  # 解析 WebDAV 返回的 XML 目录清单
-  xml: ^7.0.1
+  # 解析 WebDAV 返回的 XML 目录清单。
+  # 必须停在 6.x：xml 7 要求 Dart >= 3.11，而 Flutter 3.32（支持安卓 5.0 的那条线）
+  # 只带 Dart 3.8.1。6.x 的 API（XmlDocument.parse / descendants / innerText）完全够用。
+  xml: ^6.6.1
 
   # 本地存储：账号信息、设置
   shared_preferences: ^2.3.2
