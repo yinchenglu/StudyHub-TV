@@ -502,7 +502,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
             ),
           ),
         if (_stack.isEmpty)
-          compact
+          (compact
               ? IconButton(
                   onPressed: _loadSpots,
                   icon: const Icon(Icons.refresh_rounded),
@@ -512,9 +512,9 @@ class _FileManagerPageState extends State<FileManagerPage> {
                   onPressed: _loadSpots,
                   icon: const Icon(Icons.refresh_rounded, size: 18),
                   label: const Text('刷新'),
-                )
+                ))
         else
-          compact
+          (compact
               ? IconButton(
                   onPressed: _clearDir,
                   icon: const Icon(Icons.delete_sweep_outlined,
@@ -527,7 +527,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
                       size: 18, color: TvColors.danger),
                   label: const Text('清空',
                       style: TextStyle(color: TvColors.danger)),
-                ),
+                )),
       ],
     );
   }
