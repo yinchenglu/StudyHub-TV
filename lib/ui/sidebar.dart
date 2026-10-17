@@ -90,59 +90,61 @@ class Sidebar extends StatelessWidget {
             ),
 
             // ---------------- 当前账号 ----------------
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
-              child: FocusFrame(
-                focused: false,
-                radius: 10,
-                color: TvColors.card,
-                onTap: onAccount,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  children: [
-                    Icon(
-                      acc == null
-                          ? Icons.link_off
-                          : (acc.proto == Proto.smb ? Icons.folder_shared_outlined
-                              : Icons.cloud_outlined),
-                      size: 18,
-                      color: acc == null ? TvColors.danger : TvColors.accent,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            acc?.name ?? '未添加账号',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            acc == null
-                                ? '点这里去添加'
-                                : '${acc.proto.label} · ${app.connected ? '已连接' : '未连接'}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: app.connected
-                                  ? TvColors.textDim
-                                  : TvColors.danger,
-                            ),
-                          ),
-                        ],
+            // 只在已经有账号时显示：没有账号时这里原本写着「未添加账号」，
+            // 但「账户」本来就是菜单第一项，再挂一个"去添加"的入口
+            // 等于同一件事摆两遍，还占掉了最上面的位置。
+            if (acc != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+                child: FocusFrame(
+                  focused: false,
+                  radius: 10,
+                  color: TvColors.card,
+                  onTap: onAccount,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        acc!.proto == Proto.smb
+                            ? Icons.folder_shared_outlined
+                            : Icons.cloud_outlined,
+                        size: 18,
+                        color: TvColors.accent,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              acc!.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${acc!.proto.label} · ${app.connected ? '已连接' : '未连接'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: app.connected
+                                    ? TvColors.textDim
+                                    : TvColors.danger,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
             const SizedBox(height: 6),
 
