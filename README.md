@@ -37,13 +37,22 @@
 
 到 [Releases](https://github.com/yinchenglu/StudyHub-TV/releases) 下载对应 APK：
 
-- 绝大多数电视盒子 / 新电视 → `StudyHub-TV-arm64.apk`
-- 很老的盒子（2016 年前）→ `StudyHub-TV-armv7.apk`
+- 2016 年后的盒子 / 新电视 → `StudyHub-TV-arm64.apk`
+- 老盒子（含安卓 5.0 那一代）→ `StudyHub-TV-armv7.apk`
+
+拿不准就**先装 armv7**：它是 32 位包，绝大多数老电视都是这个架构。
 
 用 U 盘拷过去安装，或通过电视上已有的文件管理器打开。
 
-**系统要求：Android 7.0（API 24）及以上**，这是 Flutter 3.47 的下限。
-Android 5 / 6 的老盒子装不上，只能等哪天降 Flutter 版本再说。
+**系统要求：Android 5.0（API 21）及以上。**
+
+从 v1.1.0 起专门为安卓 5.0 做了两处调整：
+
+- CI 的 Flutter 钉在 **3.32.8**（最后一批 `minSdkVersion = 21` 的版本）。Flutter 3.35 起官方把
+  最低 API 抬到 24，用它打出来的包装到安卓 5/6 的电视上会直接提示"应用未安装"。
+- `compileSdk` 单独抬到 36（media_kit 原生库的要求），和 `minSdk 21` 不冲突。
+
+> 装的时候若提示"解析包错误"，八成是下错了架构：安卓 5.0 的盒子几乎都是 32 位，装 armv7。
 
 ## 快速上手
 
@@ -56,7 +65,7 @@ Android 5 / 6 的老盒子装不上，只能等哪天降 Flutter 版本再说。
 
 ## 技术方案（为什么这么做）
 
-- **Flutter**：和 StudyHub 同框架，UI 一套代码；CI 锁 Flutter 3.47.6
+- **Flutter**：和 StudyHub 同框架，UI 一套代码；CI 锁 Flutter 3.32.8（为兼容安卓 5.0，见上文）
 - **播放内核 media_kit（libmpv）**：电视上格式五花八门，系统播放器经常缺解码器
 - **WebDAV 手写客户端**：中文路径编码、`Depth:1` 降级、Range 探测这三件事现成库都做不好（与 StudyHub 同源）
 - **SMB 用纯 Dart 的 smb_connect**：

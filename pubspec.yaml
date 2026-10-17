@@ -5,7 +5,7 @@ publish_to: 'none'
 # 版本号规则和 StudyHub 一致：+N 是基础 versionCode，
 # --split-per-abi 会再加偏移（armeabi-v7a +1000，arm64-v8a +2000）。
 # 所以 v1.0.0+1 出两个包：versionCode 1001 / 2001。
-version: 1.0.1+2
+version: 1.1.0+3
 
 environment:
   sdk: ">=3.6.0 <4.0.0"

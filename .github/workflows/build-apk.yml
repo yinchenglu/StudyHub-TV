@@ -28,13 +28,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Flutter 版本锁死 3.47.6（和 StudyHub 用同一个）：
-      #   media_kit 系插件要求 compileSdk 36，只有新版 Flutter 才带；
-      #   锁死版本可避免上游升级带来的意外断裂。
+      # Flutter 版本锁死 3.32.8 —— 这是**最后一批支持 Android 5.0（API 21）**的版本。
+      #
+      # 为什么不能升到 3.35+：官方从 3.35 起把 flutter.minSdkVersion 从 21 抬到了 24，
+      # 打出来的 APK 直接在安卓 5/6 的电视上装不上（安装器报"应用未安装/解析包错误"）。
+      # 本机用户的电视就是安卓 5.0，所以必须钉在 3.32。
+      #
+      # 代价：compileSdk 默认只有 35，而 media_kit 的原生库要求 36 ——
+      # 所以下一步会用脚本把 compileSdk 显式改成 36（AGP 只是警告，不影响构建）。
       - name: 安装 Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.47.6"
+          flutter-version: "3.32.8"
           channel: stable
           cache: true
 
@@ -113,7 +118,44 @@ jobs:
               print("已注入 useLegacyPackaging = true")
           PY
 
-          grep -nE "useLegacyPackaging|MIN_SDK_BUMP_24|minSdk" android/app/build.gradle* | head -5
+          # ---------- 3.1 锁死 minSdk=21（Android 5.0）+ compileSdk=36 ----------
+          #   minSdk 21：用户电视是安卓 5.0；Flutter 3.32 的模板默认也是 21，
+          #   这里显式写死，防止模板或插件把它悄悄抬上去（抬上去就是装不上）。
+          #   compileSdk 36：media_kit 的原生库按 36 编译，低了 Gradle 会报
+          #   "requires libraries and applications that depend on it to compile
+          #   against version 36 or later"。AGP 8.7 对 36 只报 warning，能出包。
+          python3 - <<'PY'
+          import glob
+          path = (glob.glob("android/app/build.gradle.kts") + glob.glob("android/app/build.gradle"))[0]
+          src = open(path, encoding="utf-8").read()
+
+          if path.endswith(".kts"):
+              src = src.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 36")
+              src = src.replace("minSdk = flutter.minSdkVersion", "minSdk = 21")
+          else:
+              src = src.replace("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 36")
+              src = src.replace("minSdkVersion flutter.minSdkVersion", "minSdkVersion 21")
+
+          assert "minSdk" in src, "模板里找不到 minSdk 配置"
+          open(path, "w", encoding="utf-8").write(src)
+          print("SDK 已设为 minSdk=21 / compileSdk=36")
+
+          # Flutter 3.32 带的是 AGP 8.7，它"只测到 compileSdk 35"，
+          # 对 36 只发警告。这句把警告关掉，免得有人当失败看。
+          prop = "android/gradle.properties"
+          if not __import__("os").path.exists(prop):
+              prop = "android/gradle.properties"
+          try:
+              text = open(prop, encoding="utf-8").read()
+              if "suppressUnsupportedCompileSdk" not in text:
+                  text += "\nandroid.suppressUnsupportedCompileSdk=36\n"
+                  open(prop, "w", encoding="utf-8").write(text)
+                  print("已写入 suppressUnsupportedCompileSdk=36")
+          except FileNotFoundError:
+              print("没有 gradle.properties，跳过（不影响构建）")
+          PY
+
+          grep -nE "compileSdk|minSdk|useLegacyPackaging" android/app/build.gradle* | head -6
 
           # ---------- 4. MainActivity（视频抽帧通道） ----------
           SKEL_MA=$(find android/app/src/main -name "MainActivity.kt" | head -1)
