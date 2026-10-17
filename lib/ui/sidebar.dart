@@ -154,8 +154,8 @@ class Sidebar extends StatelessWidget {
                 itemCount: items.length,
                 itemBuilder: (context, i) {
                   final s = items[i];
-                  // 中间插一条分割线：媒体三项 / 系统三项分成两组
-                  final needDivider = i == 3;
+                  // 分组分割线由 Section.dividerBefore 决定（v1.2：媒体三项 / 系统两项）
+                  final needDivider = i > 0 && s.dividerBefore;
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

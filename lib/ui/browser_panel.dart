@@ -23,13 +23,15 @@ class BrowserPanel extends StatefulWidget {
     required this.app,
     required this.focusNode,
     required this.onRequestMenu,
-    required this.onOpenAccountEdit,
+    required this.onNeedAccount,
   });
 
   final AppState app;
   final FocusNode focusNode;
   final VoidCallback onRequestMenu;
-  final VoidCallback onOpenAccountEdit;
+
+  /// 没有账号时（理论上进不到这里，兜个底）跳到账户面板
+  final VoidCallback onNeedAccount;
 
   @override
   State<BrowserPanel> createState() => _BrowserPanelState();
@@ -51,11 +53,10 @@ class _BrowserPanelState extends State<BrowserPanel> {
     super.dispose();
   }
 
-  List<RemoteEntry> get _items {
-    final list = app.entries;
-    if (app.cwd.isEmpty) return list;
-    return [const RemoteEntry(path: '..', isDir: true), ...list];
-  }
+  /// 列表内容 = 当前目录的条目。
+  /// v1.2 起**不再插入「返回上一级」这个假目录** ——
+  /// 遥控器返回键就是回上级，多一格只能让人多按错一次。
+  List<RemoteEntry> get _items => app.entries;
 
   // ------------------------------------------------------------- 按键
 
@@ -132,18 +133,13 @@ class _BrowserPanelState extends State<BrowserPanel> {
   // ------------------------------------------------------------- 打开
 
   Future<void> _open(RemoteEntry e) async {
-    if (e.path == '..') {
-      await app.up();
-      setState(() => _index = 0);
-      return;
-    }
     if (e.isDir) {
       await app.enter(e.path);
       setState(() => _index = 0);
       return;
     }
     if (app.account == null) {
-      widget.onOpenAccountEdit();
+      widget.onNeedAccount();
       return;
     }
 
@@ -230,6 +226,16 @@ class _BrowserPanelState extends State<BrowserPanel> {
               ],
             ),
           ),
+          // 分区根目录时把真实路径显示出来：用户一眼能看出
+          // 「图片」到底对应服务器上的哪个文件夹（自动识别的结果）
+          if (app.cwd == app.currentBase)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Text(
+                app.baseDisplay,
+                style: const TextStyle(fontSize: 12, color: TvColors.textDim),
+              ),
+            ),
           if (!app.loading)
             Text(
               '$count 项',
@@ -287,7 +293,7 @@ class _BrowserPanelState extends State<BrowserPanel> {
           itemBuilder: (context, i) {
             final e = items[i];
             MediaRef? ref;
-            if (!e.isDir && e.path != '..') {
+            if (!e.isDir) {
               try {
                 ref = app.ref(e.path);
               } catch (_) {

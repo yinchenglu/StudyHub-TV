@@ -76,7 +76,7 @@ class MediaCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    entry.path == '..' ? '返回上一级' : entry.name,
+                    entry.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -100,14 +100,6 @@ class MediaCard extends StatelessWidget {
   }
 
   Widget _art() {
-    if (entry.path == '..') {
-      return Container(
-        color: TvColors.card,
-        child: const Icon(Icons.arrow_upward_rounded,
-            size: 44, color: TvColors.textDim),
-      );
-    }
-
     switch (entry.kind) {
       case MediaKind.folder:
         return Container(

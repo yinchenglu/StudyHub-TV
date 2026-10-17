@@ -141,17 +141,20 @@ class RemoteEntry {
 
 enum MediaKind { folder, image, video, audio, other }
 
-/// 左侧菜单的六个入口
+/// 左侧菜单的六个入口。声明顺序 = 菜单显示顺序（v1.2 起「账户」在最上面）。
 enum Section {
+  accounts,
   images,
   videos,
   audio,
-  accounts,
-  settings,
-  tools;
+  tools,
+  settings;
 
   bool get isMedia =>
       this == Section.images || this == Section.videos || this == Section.audio;
+
+  /// 这一项前面要不要画一条分割线（视觉上把「媒体」和「系统」分组）
+  bool get dividerBefore => this == Section.tools;
 
   String get label {
     switch (this) {
@@ -214,6 +217,54 @@ enum Section {
         return '这里是空的';
     }
   }
+}
+
+/// 播放模式（播放器里可切换，选择会记住）
+enum PlayMode {
+  /// 顺序播完整个目录，最后一个播完就停
+  order,
+
+  /// 单集循环：一直重复当前
+  repeatOne,
+
+  /// 随机播放
+  shuffle,
+
+  /// 目录循环：播完最后一个自动回到第一个
+  loopDir;
+
+  String get label {
+    switch (this) {
+      case PlayMode.order:
+        return '顺序播放';
+      case PlayMode.repeatOne:
+        return '单个循环';
+      case PlayMode.shuffle:
+        return '随机播放';
+      case PlayMode.loopDir:
+        return '目录循环';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case PlayMode.order:
+        return Icons.playlist_play_rounded;
+      case PlayMode.repeatOne:
+        return Icons.repeat_one_rounded;
+      case PlayMode.shuffle:
+        return Icons.shuffle_rounded;
+      case PlayMode.loopDir:
+        return Icons.repeat_rounded;
+    }
+  }
+
+  PlayMode get next => PlayMode.values[(index + 1) % PlayMode.values.length];
+  PlayMode get prev =>
+      PlayMode.values[(index - 1 + PlayMode.values.length) % PlayMode.values.length];
+
+  static PlayMode fromIndex(int i) =>
+      (i >= 0 && i < PlayMode.values.length) ? PlayMode.values[i] : PlayMode.order;
 }
 
 /// 播放/显示一个远程文件需要的信息

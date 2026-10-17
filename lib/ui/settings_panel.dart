@@ -56,11 +56,23 @@ class SettingsPanel extends StatelessWidget {
         onTap: () => app.updateSetting(() => s.setShowNames(!s.showNames)),
       ),
       TvListItem(
-        title: '视频播完自动下一个',
-        subtitle: '连续剧按顺序放，看完一集自动接下一集',
-        icon: Icons.skip_next_outlined,
-        trailingText: s.autoNext ? '开' : '关',
-        onTap: () => app.updateSetting(() => s.setAutoNext(!s.autoNext)),
+        title: '播放模式',
+        subtitle: '播放器里也能改，两处是同一个设置',
+        icon: s.playMode.icon,
+        trailingText: s.playMode.label,
+        onTap: () => app.updateSetting(() => s.setPlayMode(s.playMode.next)),
+      ),
+      TvListItem(
+        title: '跳过片头 / 片尾',
+        subtitle: '播放时按菜单键，在「播放设置」里用当前时间当片头、剩余时间当片尾',
+        icon: Icons.first_page_rounded,
+        trailingText: (s.skipStartSec == 0 && s.skipEndSec == 0)
+            ? '关闭'
+            : '${s.skipStartSec}s / ${s.skipEndSec}s',
+        onTap: () => app.updateSetting(() async {
+          await s.setSkipStartSec(0);
+          await s.setSkipEndSec(0);
+        }),
       ),
       TvListItem(
         title: '启动时默认打开',

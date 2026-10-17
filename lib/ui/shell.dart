@@ -5,7 +5,6 @@ import '../core/constants.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
-import 'account_edit_page.dart';
 import 'account_panel.dart';
 import 'browser_panel.dart';
 import 'keys.dart';
@@ -31,14 +30,14 @@ class Shell extends StatefulWidget {
 }
 
 class _ShellState extends State<Shell> {
-  /// 菜单顺序：媒体三项 + 系统三项
+  /// 菜单顺序（v1.2）：账户最上面，然后才是媒体三项，最下面工具、设置
   static const List<Section> _menu = [
+    Section.accounts,
     Section.images,
     Section.videos,
     Section.audio,
-    Section.accounts,
-    Section.settings,
     Section.tools,
+    Section.settings,
   ];
 
   int _menuIndex = 0;
@@ -114,14 +113,17 @@ class _ShellState extends State<Shell> {
   // ------------------------------------------------------------- 返回键
 
   /// 返回键的三层含义（从内到外）：
+  ///   0. 当前面板自己要消化（例如账户面板正在填表单）→ 交给它
   ///   1. 内容区里在子目录 → 回上一级
   ///   2. 其他情况 → 焦点回左侧菜单
   ///   3. 已经在菜单上 → 退出 App
   Future<void> _handleBack() async {
+    if (app.backHandler?.call() == true) return;
     if (!_menuNode.hasFocus) {
-      if (app.section.isMedia && app.cwd.isNotEmpty) {
-        await app.up();
-        return;
+      if (app.section.isMedia) {
+        // up() 内部保证不会退到分区根目录之上；退不动就说明已经到根了
+        final moved = await app.up();
+        if (moved) return;
       }
       _toMenu();
       return;
@@ -158,9 +160,7 @@ class _ShellState extends State<Shell> {
                     _contentNode.requestFocus();
                   },
                   onAccount: () {
-                    final i = _menu.indexOf(Section.accounts);
-                    setState(() => _menuIndex = i);
-                    app.setSection(Section.accounts);
+                    _go(Section.accounts);
                     _contentNode.requestFocus();
                   },
                 ),
@@ -198,7 +198,7 @@ class _ShellState extends State<Shell> {
     }
 
     if (app.account == null) {
-      return _Welcome(onAdd: _addAccount);
+      return _Welcome(onAdd: () => _go(Section.accounts));
     }
 
     // 连不上：把原因和出口都给出来，别让用户对着空列表猜
@@ -219,7 +219,7 @@ class _ShellState extends State<Shell> {
               children: [
                 _LinkBtn(label: '换个账号', onTap: () => _go(Section.accounts)),
                 const SizedBox(width: 14),
-                _LinkBtn(label: '改地址', onTap: () => _addAccount(edit: true)),
+                _LinkBtn(label: '改地址', onTap: () => _go(Section.accounts)),
               ],
             ),
           ],
@@ -235,7 +235,7 @@ class _ShellState extends State<Shell> {
           app: app,
           focusNode: _contentNode,
           onRequestMenu: _toMenu,
-          onOpenAccountEdit: () => _addAccount(edit: true),
+          onNeedAccount: () => _go(Section.accounts),
         );
       case Section.accounts:
         return AccountPanel(
@@ -262,15 +262,6 @@ class _ShellState extends State<Shell> {
     final i = _menu.indexOf(s);
     setState(() => _menuIndex = i < 0 ? 0 : i);
     app.setSection(s);
-  }
-
-  void _addAccount({bool edit = false}) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => AccountEditPage(
-        app: app,
-        account: edit ? app.account : null,
-      ),
-    ));
   }
 }
 

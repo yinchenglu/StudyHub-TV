@@ -3,15 +3,19 @@ import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
-import 'account_edit_page.dart';
+import 'account_edit_form.dart';
 import 'list_panel.dart';
+import 'pair_page.dart';
 import 'tv_widgets.dart';
 
-/// 「账户」面板：切换 / 新增 / 编辑 / 删除。
+/// 「账户」面板：切换 / 新增 / 编辑 / 删除 / 手机扫码填写。
 ///
-/// 交互取舍：电视上做不了"长按弹菜单"那种精细操作，
-/// 所以所有动作都摊平成一行一项，用 OK 直接触发，最多按两次就能到位。
-class AccountPanel extends StatelessWidget {
+/// v1.2 改动：
+///   * 菜单里「账户」挪到最上面（其他分区都跟着它走）
+///   * 「添加 / 编辑账号」不再是跳一个新页面，直接在这个面板内部切换 ——
+///     遥控器按返回就是一键回列表，不会有一层层退不出去的感觉
+///   * 增加「手机扫码填写」：电视上打密码太痛苦，让手机来填
+class AccountPanel extends StatefulWidget {
   const AccountPanel({
     super.key,
     required this.app,
@@ -24,7 +28,61 @@ class AccountPanel extends StatelessWidget {
   final VoidCallback onRequestMenu;
 
   @override
+  State<AccountPanel> createState() => _AccountPanelState();
+}
+
+class _AccountPanelState extends State<AccountPanel> {
+  /// 正在编辑的账号；null + [creating] = 新增
+  Account? _editing;
+  bool _creating = false;
+
+  bool get _inForm => _creating || _editing != null;
+
+  AppState get app => widget.app;
+
+  @override
+  void initState() {
+    super.initState();
+    // 返回键先在面板内部消化：表单状态下返回 = 回到账号列表
+    app.backOwner = this;
+    app.backHandler = _onBack;
+  }
+
+  @override
+  void dispose() {
+    if (app.backOwner == this) {
+      app.backHandler = null;
+      app.backOwner = null;
+    }
+    super.dispose();
+  }
+
+  bool _onBack() {
+    if (!_inForm) return false;
+    setState(() {
+      _creating = false;
+      _editing = null;
+    });
+    _focusList();
+    return true;
+  }
+
+  /// 回到列表后把焦点交给列表（等这一帧画完，Focus 节点才挂得上）
+  void _focusList() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.focusNode.requestFocus();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 面板被切走再切回来时，避免停在旧表单里
+    return _inForm ? _form() : _list(context);
+  }
+
+  // ------------------------------------------------------------- 列表
+
+  Widget _list(BuildContext context) {
     final accounts = app.accounts;
     final current = app.account;
 
@@ -50,14 +108,30 @@ class AccountPanel extends StatelessWidget {
         title: '添加账号',
         subtitle: '支持 WebDAV 和 SMB 两种协议',
         icon: Icons.add_circle_outline,
-        onTap: () => _edit(context, null),
+        onTap: () => setState(() {
+          _creating = true;
+          _editing = null;
+        }),
+      ),
+      TvListItem(
+        title: '手机扫码填写',
+        subtitle: '电视上打字太麻烦？用手机扫码填地址和密码，填完自动同步',
+        icon: Icons.qr_code_2_rounded,
+        onTap: () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => PairPage(app: app),
+          ));
+        },
       ),
       if (current != null)
         TvListItem(
           title: '编辑当前账号',
           subtitle: current.name,
           icon: Icons.edit_outlined,
-          onTap: () => _edit(context, current),
+          onTap: () => setState(() {
+            _creating = false;
+            _editing = current;
+          }),
         ),
       if (current != null)
         TvListItem(
@@ -76,27 +150,77 @@ class AccountPanel extends StatelessWidget {
         ),
     ];
 
+    final lib = app.libraryRoot;
     return TvListPanel(
       title: '账户',
       subtitle: accounts.isEmpty
           ? '还没有账号。点「添加账号」，填上自己 NAS 的地址就能开始看片。'
           : '选中账号按 OK 切换；同一时间只有一个账号在用。',
       items: items,
-      focusNode: focusNode,
-      onRequestMenu: onRequestMenu,
-      footer: const Text(
+      focusNode: widget.focusNode,
+      onRequestMenu: widget.onRequestMenu,
+      footer: Text(
+        '${lib.isEmpty ? '没识别到 StudyHub-TV 目录，当前按账号根目录浏览。\n' : '媒体库目录：$lib\n'}'
         '地址示例：群晖 http://192.168.1.10:5005   ·   '
         '威联通 http://192.168.1.10:8081   ·   '
         'Alist http://192.168.1.10:5244/dav',
-        style: TextStyle(fontSize: 13, height: 1.7, color: TvColors.textDim),
+        style: const TextStyle(fontSize: 13, height: 1.7, color: TvColors.textDim),
       ),
     );
   }
 
-  void _edit(BuildContext context, Account? a) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => AccountEditPage(app: app, account: a),
-    ));
+  // ------------------------------------------------------------- 表单
+
+  Widget _form() {
+    final editing = _editing;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 30, 4),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: _onBack,
+                icon: const Icon(Icons.arrow_back),
+                tooltip: '返回账户列表',
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _creating ? '添加账号' : '编辑账号',
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 14),
+              const Text(
+                '（返回键可以直接回列表）',
+                style: TextStyle(fontSize: 13, color: TvColors.textDim),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: AccountEditForm(
+                key: ValueKey(_creating ? 'new' : editing?.id),
+                app: app,
+                account: editing,
+                onDone: (_) {
+                  setState(() {
+                    _creating = false;
+                    _editing = null;
+                  });
+                  _focusList();
+                },
+                onCancel: _onBack,
+              ),
+            ),
+          ),
+        ),
+        const StatusBar(text: '填完点「测试并保存」，一次就能验完地址和密码'),
+      ],
+    );
   }
 
   Future<void> _confirmDelete(BuildContext context, Account a) async {

@@ -5,6 +5,7 @@ import '../core/fmt.dart';
 import '../core/theme.dart';
 import '../data/thumb_cache.dart';
 import '../state/app_state.dart';
+import 'download_page.dart';
 import 'list_panel.dart';
 
 /// 「工具」面板：连接自检、清缓存、诊断信息。
@@ -24,6 +25,18 @@ class ToolsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = <TvListItem>[
+      TvListItem(
+        title: '下载工作',
+        subtitle: app.downloadBase.isEmpty
+            ? '服务器上的 download 文件夹（还没连上账号）'
+            : '把 ${app.downloadBase} 里的文件下到电视本地',
+        icon: Icons.download_rounded,
+        onTap: () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => DownloadPage(app: app),
+          ));
+        },
+      ),
       TvListItem(
         title: '连接测试',
         subtitle: '检查账号、目录权限，以及视频能不能拖进度条',

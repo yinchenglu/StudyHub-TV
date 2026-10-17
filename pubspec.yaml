@@ -5,9 +5,9 @@ publish_to: 'none'
 # +N 是 versionCode。
 # 注意：Flutter 3.47 的 --split-per-abi 会自动加偏移（v7a +1000 / arm64 +2000），
 # 但 **Flutter 3.32 不加**（为了兼容安卓 5.0 我们钉在 3.32），两个包用同一个 code。
-# 所以这里直接把 code 写成 2003 —— 必须大于上一版 v1.0.1 的 2002，
+# 所以这里直接把 code 写成 2004 —— 必须大于 v1.1.0 的 2003，
 # 否则老设备上会被判成"降级"，报"应用未安装"。
-version: 1.1.0+2003
+version: 1.2.0+2004
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
@@ -34,6 +34,11 @@ dependencies:
 
   # 图片磁盘缓存 + 带 Basic Auth 请求头加载
   cached_network_image: ^3.4.1
+
+  # 「手机扫码填写账号」的二维码。
+  # qr_flutter 只是把纯 Dart 的 qr 包（只算模块矩阵）画成 Widget，
+  # 不含任何原生代码 —— 对安卓 5 这种老系统最安全，也不会拖累构建。
+  qr_flutter: ^4.1.0
 
   # 万能播放器内核（libmpv）：mkv / avi / ts / rmvb 都可能放得动。
   # 上面两个是 Dart 侧，下面那个只提供安卓原生解码库，代码里不 import 但绝不能删。

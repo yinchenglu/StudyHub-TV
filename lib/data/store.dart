@@ -5,7 +5,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
-
 /// 本地存储：账号列表 + 密码 + 一坨设置项。
 ///
 /// 密码为什么不跟账号一起存 SharedPreferences：
@@ -29,6 +28,10 @@ class Store {
   static const _kStartSection = 'start_section';
   static const _kDensity = 'grid_density';
   static const _kSlideshow = 'slideshow_sec';
+  static const _kPlayMode = 'play_mode';
+  static const _kSpeed = 'play_speed';
+  static const _kSkipStart = 'skip_start_sec';
+  static const _kSkipEnd = 'skip_end_sec';
   static const _kPwdPrefix = 'pwd_';
 
   final _secure = const FlutterSecureStorage();
@@ -173,4 +176,26 @@ class Store {
   /// 图片幻灯片播放间隔（秒），0 = 关闭
   int get slideshowSec => _p!.getInt(_kSlideshow) ?? 0;
   Future<void> setSlideshowSec(int v) async => _p!.setInt(_kSlideshow, v);
+
+  // ------------------------------------------------------------- 播放器
+
+  /// 播放模式（见 models.dart 的 PlayMode）
+  PlayMode get playMode => PlayMode.fromIndex(_p!.getInt(_kPlayMode) ?? 0);
+  Future<void> setPlayMode(PlayMode m) async => _p!.setInt(_kPlayMode, m.index);
+
+  /// 倍速。存成 double，0.25 步进，范围 0.5–3.0
+  double get speed {
+    final v = _p!.getDouble(_kSpeed) ?? 1.0;
+    return v <= 0 ? 1.0 : v;
+  }
+
+  Future<void> setSpeed(double v) async => _p!.setDouble(_kSpeed, v);
+
+  /// 跳过片头：每个视频开头自动跳过多少秒（0 = 关闭）
+  int get skipStartSec => _p!.getInt(_kSkipStart) ?? 0;
+  Future<void> setSkipStartSec(int v) async => _p!.setInt(_kSkipStart, v < 0 ? 0 : v);
+
+  /// 跳过片尾：离结束还有多少秒就自动下一个（0 = 关闭）
+  int get skipEndSec => _p!.getInt(_kSkipEnd) ?? 0;
+  Future<void> setSkipEndSec(int v) async => _p!.setInt(_kSkipEnd, v < 0 ? 0 : v);
 }
