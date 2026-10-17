@@ -1,0 +1,9 @@
+Resolving dependencies...
+The current Dart SDK version is 3.8.1.
+
+Because studyhub_tv depends on xml >=7.0.0 which requires SDK version >=3.11.0 <4.0.0, version solving failed.
+
+
+You can try the following suggestion to make the pubspec resolve:
+* Consider downgrading your constraint on xml: flutter pub add xml:^6.6.1
+Failed to update packages.
