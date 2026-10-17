@@ -7,7 +7,7 @@ const String kAppName = 'StudyHub TV';
 const String kAppVersion = '1.1.0';
 
 /// pubspec.yaml 里的 version（去掉 +N 后要和上面一致）
-const String kPubspecVersion = '1.1.0+3';
+const String kPubspecVersion = '1.1.0+2003';
 
 /// 项目主页（「关于」里点一下会提示这个地址）
 const String kRepoUrl = 'https://github.com/yinchenglu/StudyHub-TV';
