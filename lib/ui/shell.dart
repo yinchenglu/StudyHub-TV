@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/constants.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
 import 'account_panel.dart';
 import 'browser_panel.dart';
+import 'compact_nav.dart';
 import 'keys.dart';
 import 'settings_panel.dart';
 import 'sidebar.dart';
@@ -119,6 +121,17 @@ class _ShellState extends State<Shell> {
   ///   3. 已经在菜单上 → 退出 App
   Future<void> _handleBack() async {
     if (app.backHandler?.call() == true) return;
+
+    // 手机（窄屏）没有左侧菜单，返回键的"回菜单"这一层不存在：
+    // 在子目录里就回上一级，已经在分区根目录就直接退出 App。
+    if (isCompact(context)) {
+      if (app.section.isMedia) {
+        if (await app.up()) return;
+      }
+      await SystemNavigator.pop();
+      return;
+    }
+
     if (!_menuNode.hasFocus) {
       if (app.section.isMedia) {
         // up() 内部保证不会退到分区根目录之上；退不动就说明已经到根了
@@ -135,6 +148,7 @@ class _ShellState extends State<Shell> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = isCompact(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -143,38 +157,71 @@ class _ShellState extends State<Shell> {
       },
       child: Scaffold(
         backgroundColor: TvColors.bg,
+        // 手机上要留出键盘空间，否则填账号时输入框被键盘盖住
+        resizeToAvoidBottomInset: true,
+        // 窄屏的底部安全区交给 CompactNav 自己吃掉（它要用菜单底色铺满），
+        // 其余情况还是交给 SafeArea
         body: SafeArea(
+          bottom: !compact,
           child: AnimatedBuilder(
             animation: app,
-            builder: (context, _) => Row(
-              children: [
-                Sidebar(
-                  app: app,
-                  focusNode: _menuNode,
-                  items: _menu,
-                  index: _menuIndex,
-                  onKey: _onMenuKey,
-                  onTap: (i) {
-                    setState(() => _menuIndex = i);
-                    app.setSection(_menu[i]);
-                    _contentNode.requestFocus();
-                  },
-                  onAccount: () {
-                    _go(Section.accounts);
-                    _contentNode.requestFocus();
-                  },
-                ),
-                Expanded(
-                  child: ColoredBox(
-                    color: TvColors.bg,
-                    child: _content(),
-                  ),
-                ),
-              ],
-            ),
+            builder: (context, _) =>
+                compact ? _compactBody() : _wideBody(),
           ),
         ),
       ),
+    );
+  }
+
+  /// 宽屏（电视 / 平板横屏）：左侧固定菜单 + 右侧内容
+  Widget _wideBody() {
+    return Row(
+      children: [
+        Sidebar(
+          app: app,
+          focusNode: _menuNode,
+          items: _menu,
+          index: _menuIndex,
+          onKey: _onMenuKey,
+          onTap: (i) {
+            setState(() => _menuIndex = i);
+            app.setSection(_menu[i]);
+            _contentNode.requestFocus();
+          },
+          onAccount: () {
+            _go(Section.accounts);
+            _contentNode.requestFocus();
+          },
+        ),
+        Expanded(
+          child: ColoredBox(
+            color: TvColors.bg,
+            child: _content(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 窄屏（手机）：内容占满，菜单换成底部导航条
+  Widget _compactBody() {
+    return Column(
+      children: [
+        Expanded(
+          child: ColoredBox(
+            color: TvColors.bg,
+            child: _content(),
+          ),
+        ),
+        CompactNav(
+          items: _menu,
+          current: app.section,
+          onTap: (i) {
+            setState(() => _menuIndex = i);
+            app.setSection(_menu[i]);
+          },
+        ),
+      ],
     );
   }
 
@@ -204,7 +251,7 @@ class _ShellState extends State<Shell> {
     // 连不上：把原因和出口都给出来，别让用户对着空列表猜
     if (!app.connected && app.error != null) {
       return Padding(
-        padding: const EdgeInsets.all(40),
+        padding: EdgeInsets.all(isCompact(context) ? 16 : 40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -214,11 +261,12 @@ class _ShellState extends State<Shell> {
               focused: _contentNode.hasFocus,
             ),
             const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 14,
+              runSpacing: 10,
               children: [
                 _LinkBtn(label: '换个账号', onTap: () => _go(Section.accounts)),
-                const SizedBox(width: 14),
                 _LinkBtn(label: '改地址', onTap: () => _go(Section.accounts)),
               ],
             ),
@@ -273,56 +321,90 @@ class _Welcome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 92,
-              height: 92,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                gradient: const LinearGradient(
-                  colors: [TvColors.accent, Color(0xFF1E8FA8)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+    final compact = isCompact(context);
+    // 手机上"标题 + 说明 + 按钮"竖着排会超出屏幕（尤其横屏时，
+    // 屏幕只有 360 高），所以整页可滚 —— 保证按钮任何时候都点得到。
+    return LayoutBuilder(
+      builder: (context, c) => SingleChildScrollView(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 20 : 32,
+          vertical: compact ? 20 : 28,
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: c.maxHeight - (compact ? 40 : 56)),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: compact ? 74 : 92,
+                    height: compact ? 74 : 92,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(compact ? 20 : 24),
+                      gradient: const LinearGradient(
+                        colors: [TvColors.accent, Color(0xFF1E8FA8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Icon(Icons.play_arrow_rounded,
+                        size: compact ? 48 : 60, color: const Color(0xFF06222B)),
+                  ),
+                  SizedBox(height: compact ? 18 : 26),
+                  Text(
+                    '欢迎使用 $kAppName',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: compact ? 22 : 28,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 10 : 14),
+                  Text(
+                    '把 NAS 里存的图片、视频、音乐，用遥控器直接放到电视上看。\n'
+                    '不需要刮削、不需要整理目录，你原来的文件夹长什么样，这里就长什么样。',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: compact ? 13.5 : 15,
+                      height: 1.8,
+                      color: TvColors.textDim,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 22 : 30),
+                  SizedBox(
+                    width: compact ? double.infinity : null,
+                    child: FilledButton.icon(
+                      autofocus: true,
+                      onPressed: onAdd,
+                      icon: const Icon(Icons.add_link_rounded),
+                      label: const Text('添加我的第一个账号'),
+                      style: FilledButton.styleFrom(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: compact ? 16 : 30,
+                          vertical: compact ? 16 : 20,
+                        ),
+                        textStyle: TextStyle(
+                          fontSize: compact ? 16 : 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: compact ? 16 : 22),
+                  Text(
+                    '支持 WebDAV（群晖 / 威联通 / Alist / Nextcloud）和 SMB（Windows 共享 / NAS 共享文件夹）',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: compact ? 12 : 13,
+                      color: TvColors.textDim,
+                    ),
+                  ),
+                ],
               ),
-              child: const Icon(Icons.play_arrow_rounded,
-                  size: 60, color: Color(0xFF06222B)),
             ),
-            const SizedBox(height: 26),
-            const Text(
-              '欢迎使用 $kAppName',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              '把 NAS 里存的图片、视频、音乐，用遥控器直接放到电视上看。\n'
-              '不需要刮削、不需要整理目录，你原来的文件夹长什么样，这里就长什么样。',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, height: 1.8, color: TvColors.textDim),
-            ),
-            const SizedBox(height: 30),
-            FilledButton.icon(
-              autofocus: true,
-              onPressed: onAdd,
-              icon: const Icon(Icons.add_link_rounded),
-              label: const Text('添加我的第一个账号'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
-                textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              ),
-            ),
-            const SizedBox(height: 22),
-            const Text(
-              '支持 WebDAV（群晖 / 威联通 / Alist / Nextcloud）和 SMB（Windows 共享 / NAS 共享文件夹）',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: TvColors.textDim),
-            ),
-          ],
+          ),
         ),
       ),
     );

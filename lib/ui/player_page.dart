@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
@@ -696,87 +697,149 @@ class _PlayerPageState extends State<PlayerPage> {
         top: _ui ? 0 : -110,
         left: 0,
         right: 0,
-        child: Container(
-          height: 104,
-          padding: const EdgeInsets.fromLTRB(26, 20, 16, 12),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [alpha(Colors.black, 0.8), Colors.transparent],
+        child: Builder(builder: (context) {
+          final compact = isCompact(context);
+          return Container(
+            height: compact ? 78 : 104,
+            padding: EdgeInsets.fromLTRB(
+                compact ? 14 : 26, compact ? 12 : 20, 10, 8),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [alpha(Colors.black, 0.8), Colors.transparent],
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _cur.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 19, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${_index + 1} / ${widget.files.length}'
-                      '${_isVideo ? '' : ' · 音频'}'
-                      ' · ${_mode.label} · ${_fmtSpeed(_speed)}'
-                      '${_skipStart > 0 ? ' · 跳片头 ${fmtDuration(Duration(seconds: _skipStart))}' : ''}'
-                      '${_skipEnd > 0 ? ' · 跳片尾 ${_skipEnd}s' : ''}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 12.5, color: TvColors.textDim),
-                    ),
-                  ],
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _cur.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: compact ? 16 : 19,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${_index + 1} / ${widget.files.length}'
+                        '${_isVideo ? '' : ' · 音频'}'
+                        ' · ${_mode.label} · ${_fmtSpeed(_speed)}'
+                        '${_skipStart > 0 ? ' · 跳片头 ${fmtDuration(Duration(seconds: _skipStart))}' : ''}'
+                        '${_skipEnd > 0 ? ' · 跳片尾 ${_skipEnd}s' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: TvColors.textDim),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.close),
-                iconSize: 26,
-              ),
-            ],
-          ),
-        ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                  iconSize: 26,
+                ),
+              ],
+            ),
+          );
+        }),
       );
 
-  Widget _bottomBar() => AnimatedPositioned(
-        duration: const Duration(milliseconds: 180),
-        bottom: _ui ? 0 : -190,
-        left: 0,
-        right: 0,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(28, 26, 28, 22),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [alpha(Colors.black, 0.88), Colors.transparent],
-            ),
+  Widget _bottomBar() {
+    final compact = isCompact(context);
+    final timeText = <Widget>[
+      Text(fmtDuration(_pos),
+          style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
+      const Text(' / ',
+          style: TextStyle(fontSize: 13, color: TvColors.textDim)),
+      Text(fmtDuration(_dur),
+          style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
+    ];
+
+    final transport = <Widget>[
+      _CtlBtn(
+        icon: Icons.skip_previous_rounded,
+        onTap: _index > 0 ? _prev : null,
+      ),
+      _CtlBtn(
+        icon: Icons.replay_10_rounded,
+        onTap: () => _seekBy(-10),
+      ),
+      _CtlBtn(
+        icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        big: true,
+        onTap: _togglePlay,
+      ),
+      _CtlBtn(
+        icon: Icons.forward_10_rounded,
+        onTap: () => _seekBy(10),
+      ),
+      _CtlBtn(
+        icon: Icons.skip_next_rounded,
+        onTap: _index + 1 < widget.files.length ? _next : null,
+      ),
+    ];
+
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 180),
+      bottom: _ui ? 0 : -210,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+            compact ? 12 : 28, compact ? 10 : 26, compact ? 12 : 28, compact ? 10 : 22),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [alpha(Colors.black, 0.88), Colors.transparent],
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _ProgressBar(
-                pos: _pos,
-                dur: _dur,
-                onSeek: _seekToFraction,
-              ),
-              const SizedBox(height: 10),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _ProgressBar(
+              pos: _pos,
+              dur: _dur,
+              onSeek: _seekToFraction,
+            ),
+            const SizedBox(height: 6),
+            if (compact) ...[
+              // 手机上一行排不下 7 个按钮（一定溢出，就是我们看到的"显示不全"），
+              // 拆成"时间 + 小按钮"和"播放控制"两行。
               Row(
                 children: [
-                  Text(fmtDuration(_pos),
+                  ...timeText,
+                  const Spacer(),
+                  _CtlBtn(
+                    icon: Icons.format_list_bulleted_rounded,
+                    onTap: () => _openLayer(_Layer.playlist),
+                  ),
+                  _CtlBtn(
+                    icon: Icons.tune_rounded,
+                    onTap: () => _openLayer(_Layer.menu),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(_fmtSpeed(_speed),
                       style: const TextStyle(
                           fontSize: 13, color: TvColors.textDim)),
-                  const Text(' / ',
-                      style: TextStyle(fontSize: 13, color: TvColors.textDim)),
-                  Text(fmtDuration(_dur),
-                      style: const TextStyle(
-                          fontSize: 13, color: TvColors.textDim)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: transport,
+              ),
+            ] else
+              Row(
+                children: [
+                  ...timeText,
                   const SizedBox(width: 18),
                   _CtlBtn(
                     icon: Icons.format_list_bulleted_rounded,
@@ -789,37 +852,18 @@ class _PlayerPageState extends State<PlayerPage> {
                     onTap: () => _openLayer(_Layer.menu),
                   ),
                   const Spacer(),
-                  _CtlBtn(
-                    icon: Icons.skip_previous_rounded,
-                    onTap: _index > 0 ? _prev : null,
-                  ),
-                  _CtlBtn(
-                    icon: Icons.replay_10_rounded,
-                    onTap: () => _seekBy(-10),
-                  ),
-                  _CtlBtn(
-                    icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    big: true,
-                    onTap: _togglePlay,
-                  ),
-                  _CtlBtn(
-                    icon: Icons.forward_10_rounded,
-                    onTap: () => _seekBy(10),
-                  ),
-                  _CtlBtn(
-                    icon: Icons.skip_next_rounded,
-                    onTap: _index + 1 < widget.files.length ? _next : null,
-                  ),
+                  ...transport,
                   const SizedBox(width: 14),
                   Text(_fmtSpeed(_speed),
                       style: const TextStyle(
                           fontSize: 13, color: TvColors.textDim)),
                 ],
               ),
-            ],
-          ),
+          ],
         ),
-      );
+      ),
+    );
+  }
 
   // ------------------------------------------------------------- 面板
 
@@ -875,13 +919,15 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
     ];
 
+    final compact = isCompact(context);
     return Positioned(
       left: 0,
       top: 0,
       bottom: 0,
       child: Container(
-        width: 460,
-        padding: const EdgeInsets.fromLTRB(22, 90, 22, 26),
+        width: compact ? MediaQuery.sizeOf(context).width : 460,
+        padding: EdgeInsets.fromLTRB(
+            compact ? 12 : 22, compact ? 60 : 90, compact ? 12 : 22, 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.centerLeft,
@@ -908,13 +954,15 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Widget _playlistLayer() {
+    final compact = isCompact(context);
     return Positioned(
       right: 0,
       top: 0,
       bottom: 0,
       child: Container(
-        width: 430,
-        padding: const EdgeInsets.fromLTRB(18, 90, 18, 20),
+        width: compact ? MediaQuery.sizeOf(context).width : 430,
+        padding: EdgeInsets.fromLTRB(
+            compact ? 12 : 18, compact ? 56 : 90, compact ? 12 : 18, 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.centerRight,
@@ -1155,7 +1203,8 @@ class _CtlBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final size = big ? 62.0 : 46.0;
+    final compact = isCompact(context);
+    final size = big ? (compact ? 54.0 : 62.0) : (compact ? 42.0 : 46.0);
     final enabled = onTap != null;
     final btn = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 5),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../data/remote/remote_source.dart';
@@ -171,8 +172,16 @@ class _AccountEditFormState extends State<AccountEditForm> {
   @override
   Widget build(BuildContext context) {
     final isSmb = _proto == Proto.smb;
+    final compact = isCompact(context);
+    // 键盘弹起来时底部会被盖住，多留一段滚动余量
+    final kb = MediaQuery.viewInsetsOf(context).bottom;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(30, 6, 30, 30),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 14 : 30,
+        compact ? 4 : 6,
+        compact ? 14 : 30,
+        (compact ? 20 : 30) + kb,
+      ),
       children: [
         _protoSwitch(),
         const SizedBox(height: 18),
@@ -249,43 +258,85 @@ class _AccountEditFormState extends State<AccountEditForm> {
         ],
 
         const SizedBox(height: 22),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: _busy ? null : _testAndSave,
-                icon: const Icon(Icons.check_circle_outline),
-                label: const Text('测试并保存'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  textStyle: const TextStyle(fontSize: 17),
+        // 手机上三个按钮横排会挤成一坨（"测试并保存"只剩几毫米），
+        // 改成主按钮独占一行、另外两个平分一行。
+        if (compact) ...[
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _testAndSave,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('测试并保存'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                textStyle: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy ? null : _saveOnly,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                  child: const Text('仅保存'),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            OutlinedButton(
-              onPressed: _busy ? null : _saveOnly,
-              style: OutlinedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
-                textStyle: const TextStyle(fontSize: 15),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextButton(
+                  onPressed: _busy ? null : widget.onCancel,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                  child: const Text('取消'),
+                ),
               ),
-              child: const Text('仅保存'),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: _busy ? null : widget.onCancel,
-              style: TextButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
-                textStyle: const TextStyle(fontSize: 15),
+            ],
+          ),
+        ] else
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy ? null : _testAndSave,
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('测试并保存'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    textStyle: const TextStyle(fontSize: 17),
+                  ),
+                ),
               ),
-              child: const Text('取消'),
-            ),
-          ],
-        ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: _busy ? null : _saveOnly,
+                style: OutlinedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
+                  textStyle: const TextStyle(fontSize: 15),
+                ),
+                child: const Text('仅保存'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _busy ? null : widget.onCancel,
+                style: TextButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
+                  textStyle: const TextStyle(fontSize: 15),
+                ),
+                child: const Text('取消'),
+              ),
+            ],
+          ),
         const SizedBox(height: 18),
-        const Text(
+        Text(
           '目录不用自己填：连上之后 App 会自动找 StudyHub-TV 下的 '
           'image / video / audio 三个文件夹。\n'
           '填不准怎么办：\n'
@@ -294,13 +345,16 @@ class _AccountEditFormState extends State<AccountEditForm> {
           '   那么在「共享目录」里就填 /media\n'
           '· 电视和服务器必须在同一个路由器下（或能互相 ping 通）',
           style: TextStyle(
-              fontSize: 13, height: 1.9, color: TvColors.textDim),
+              fontSize: compact ? 12 : 13,
+              height: 1.9,
+              color: TvColors.textDim),
         ),
       ],
     );
   }
 
   Widget _protoSwitch() {
+    final compact = isCompact(context);
     Widget seg(Proto p) {
       final active = _proto == p;
       return Expanded(
@@ -309,7 +363,7 @@ class _AccountEditFormState extends State<AccountEditForm> {
           onTap: () => setState(() => _proto = p),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: EdgeInsets.symmetric(vertical: compact ? 12 : 14),
             decoration: BoxDecoration(
               color: active ? alpha(TvColors.accent, 0.18) : TvColors.card,
               borderRadius: BorderRadius.circular(10),
@@ -319,12 +373,16 @@ class _AccountEditFormState extends State<AccountEditForm> {
               ),
             ),
             child: Center(
-              child: Text(
-                p == Proto.webdav ? 'WebDAV' : 'SMB / 共享文件夹',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: active ? TvColors.accent : TvColors.textDim,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  p == Proto.webdav ? 'WebDAV' : 'SMB / 共享文件夹',
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: compact ? 14 : 16,
+                    fontWeight: FontWeight.w700,
+                    color: active ? TvColors.accent : TvColors.textDim,
+                  ),
                 ),
               ),
             ),

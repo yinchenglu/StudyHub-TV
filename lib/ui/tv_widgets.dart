@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/layout.dart';
 import '../core/theme.dart';
 
 /// 焦点框。整个 App 的"光标"就靠它 —— 电视上没有鼠标，
@@ -89,17 +90,24 @@ class TvRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 手机上内容区窄，字号缩一档、内边距收一收，否则标题和右侧文字会撞车
+    final compact = isCompact(context);
+    final pad = compact
+        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
+        : const EdgeInsets.symmetric(horizontal: 16, vertical: 10);
+    final inner = height - (compact ? 16 : 20);
+
     return FocusFrame(
       focused: focused,
       onTap: onTap,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: pad,
       child: SizedBox(
-        height: height - 20,
+        height: inner,
         child: Row(
           children: [
             if (leading != null) ...[
               leading!,
-              const SizedBox(width: 14),
+              SizedBox(width: compact ? 10 : 14),
             ],
             Expanded(
               child: Column(
@@ -111,29 +119,129 @@ class TvRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 19,
+                      fontSize: compact ? 16.5 : 19,
                       fontWeight: FontWeight.w600,
                       color: danger ? TvColors.danger : TvColors.text,
                     ),
                   ),
                   if (subtitle != null && subtitle!.isNotEmpty) ...[
-                    const SizedBox(height: 4),
+                    SizedBox(height: compact ? 2 : 4),
                     Text(
                       subtitle!,
-                      maxLines: 1,
+                      maxLines: compact ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 14, color: TvColors.textDim),
+                      style: TextStyle(
+                        fontSize: compact ? 12.5 : 14,
+                        height: 1.35,
+                        color: TvColors.textDim,
+                      ),
                     ),
                   ],
                 ],
               ),
             ),
             if (trailing != null) ...[
-              const SizedBox(width: 12),
+              SizedBox(width: compact ? 8 : 12),
               trailing!,
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 页面顶部标题条（工具里的几个子页面、扫码页共用）。
+///
+/// 电视上：一行排开，标题 24 + 右边一长串说明。
+/// 手机上：标题缩到 19，说明文字挪到第二行 —— 360dp 的屏幕上
+/// "返回键 + 标题 + 说明 + 按钮"硬塞一行一定会溢出，溢出就是"显示不全"。
+class PageHeader extends StatelessWidget {
+  const PageHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.leading,
+    this.actions = const [],
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget? leading;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = isCompact(context);
+    final pad = EdgeInsets.fromLTRB(
+      compact ? 8 : 22,
+      compact ? 6 : 14,
+      compact ? 8 : 22,
+      compact ? 2 : 8,
+    );
+
+    final titleText = Text(
+      title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: compact ? 19 : 24,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+
+    if (compact) {
+      return Padding(
+        padding: pad,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                if (leading != null) leading!,
+                Expanded(child: titleText),
+                ...actions,
+              ],
+            ),
+            if (subtitle != null && subtitle!.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.only(
+                  left: leading == null ? 2 : 46,
+                  right: 4,
+                  top: 2,
+                ),
+                child: Text(
+                  subtitle!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, color: TvColors.textDim),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: pad,
+      child: Row(
+        children: [
+          if (leading != null) leading!,
+          Flexible(flex: 3, child: titleText),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(width: 14),
+            Flexible(
+              flex: 4,
+              child: Text(
+                subtitle!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14, color: TvColors.textDim),
+              ),
+            ),
+          ],
+          ...actions,
+        ],
       ),
     );
   }
@@ -148,19 +256,24 @@ class PanelTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = isCompact(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 18),
+      padding: EdgeInsets.fromLTRB(compact ? 4 : 8, 0, compact ? 4 : 8,
+          compact ? 10 : 18),
       child: Row(
         children: [
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-              color: TvColors.text,
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 21 : 26,
+                fontWeight: FontWeight.w700,
+                color: TvColors.text,
+              ),
             ),
           ),
-          const Spacer(),
           if (trailing != null) trailing!,
         ],
       ),
@@ -265,9 +378,10 @@ class StatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox(height: 34);
+    final compact = isCompact(context);
     return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      height: compact ? 26 : 34,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 20),
       alignment: Alignment.centerLeft,
       child: Row(
         children: [
@@ -283,15 +397,17 @@ class StatusBar extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: compact ? 12 : 13,
                 color: warn ? TvColors.danger : TvColors.textDim,
               ),
             ),
           ),
-          const Text(
-            '遥控：方向键移动 · OK 打开 · 返回键上一级 · 菜单键刷新',
-            style: TextStyle(fontSize: 12, color: TvColors.textDim),
-          ),
+          // 遥控器提示只对电视有意义，手机上纯占地方
+          if (!compact)
+            const Text(
+              '遥控：方向键移动 · OK 打开 · 返回键上一级 · 菜单键刷新',
+              style: TextStyle(fontSize: 12, color: TvColors.textDim),
+            ),
         ],
       ),
     );

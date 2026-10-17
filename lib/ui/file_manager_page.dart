@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/constants.dart';
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/downloader.dart';
 import '../native/system_channel.dart';
@@ -479,54 +480,55 @@ class _FileManagerPageState extends State<FileManagerPage> {
   }
 
   Widget _header() {
+    final compact = isCompact(context);
     final title = _stack.isEmpty ? '文件管理' : _names.join(' / ');
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () =>
-                _stack.isEmpty ? Navigator.of(context).pop() : _up(),
-            icon: const Icon(Icons.arrow_back),
-            tooltip: '返回',
-          ),
-          const SizedBox(width: 6),
-          Text(
-            _stack.isEmpty ? '文件管理' : '文件管理 · $title',
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
+    return PageHeader(
+      title: _stack.isEmpty ? '文件管理' : '文件管理 · $title',
+      subtitle: _stack.isEmpty
+          ? '电视本地的文件，都在这里'
+          : '${_totalFiles} 个文件 · ${fmtBytes(_totalBytes)}',
+      leading: IconButton(
+        onPressed: () => _stack.isEmpty ? Navigator.of(context).pop() : _up(),
+        icon: const Icon(Icons.arrow_back),
+        tooltip: '返回',
+      ),
+      actions: [
+        if (_stack.isEmpty && _totalBytes > 0 && !compact)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
             child: Text(
-              _stack.isEmpty
-                  ? '电视本地的文件，都在这里'
-                  : '${_totalFiles} 个文件 · ${fmtBytes(_totalBytes)}',
-              style: const TextStyle(fontSize: 14, color: TvColors.textDim),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (_stack.isEmpty)
-            Text(
-              _totalBytes > 0 ? '合计 ${fmtBytes(_totalBytes)}' : '',
+              '合计 ${fmtBytes(_totalBytes)}',
               style: const TextStyle(fontSize: 13, color: TvColors.textDim),
             ),
-          const SizedBox(width: 10),
-          if (_stack.isEmpty)
-            TextButton.icon(
-              onPressed: _loadSpots,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('刷新'),
-            )
-          else
-            TextButton.icon(
-              onPressed: _clearDir,
-              icon: const Icon(Icons.delete_sweep_outlined,
-                  size: 18, color: TvColors.danger),
-              label: const Text('清空',
-                  style: TextStyle(color: TvColors.danger)),
-            ),
-        ],
-      ),
+          ),
+        if (_stack.isEmpty)
+          compact
+              ? IconButton(
+                  onPressed: _loadSpots,
+                  icon: const Icon(Icons.refresh_rounded),
+                  tooltip: '刷新',
+                )
+              : TextButton.icon(
+                  onPressed: _loadSpots,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('刷新'),
+                )
+        else
+          compact
+              ? IconButton(
+                  onPressed: _clearDir,
+                  icon: const Icon(Icons.delete_sweep_outlined,
+                      color: TvColors.danger),
+                  tooltip: '清空',
+                )
+              : TextButton.icon(
+                  onPressed: _clearDir,
+                  icon: const Icon(Icons.delete_sweep_outlined,
+                      size: 18, color: TvColors.danger),
+                  label: const Text('清空',
+                      style: TextStyle(color: TvColors.danger)),
+                ),
+      ],
     );
   }
 
@@ -544,7 +546,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
           width: c.maxWidth > 900 ? 900 : c.maxWidth,
           child: ListView.builder(
             controller: _scroll,
-            padding: const EdgeInsets.fromLTRB(22, 6, 22, 22),
+            padding: EdgeInsets.fromLTRB(pagePad(context), 6, pagePad(context), 22),
             itemCount: _rows.length,
             itemBuilder: (context, i) => _row(_rows[i], i),
           ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../data/pair_server.dart';
@@ -87,34 +88,34 @@ class _PairPageState extends State<PairPage> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = isCompact(context);
     return Scaffold(
       backgroundColor: TvColors.bg,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 6),
-              child: Row(
-                children: [
+            PageHeader(
+              title: '手机扫码填写账号',
+              leading: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back),
+                tooltip: '返回',
+              ),
+              actions: [
+                if (compact)
                   IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: '返回',
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    '手机扫码填写账号',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-                  ),
-                  const Spacer(),
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh_rounded),
+                    tooltip: '重建二维码',
+                  )
+                else
                   TextButton.icon(
                     onPressed: _retry,
                     icon: const Icon(Icons.refresh_rounded, size: 18),
                     label: const Text('重建二维码'),
                   ),
-                ],
-              ),
+              ],
             ),
             Expanded(
               child: Center(
@@ -162,66 +163,84 @@ class _PairPageState extends State<PairPage> {
 
   Widget _readyView() {
     final s = _server!;
+    final compact = isCompact(context);
+    final qrSize = compact
+        ? (MediaQuery.sizeOf(context).width - 90).clamp(150.0, 280.0).toDouble()
+        : 300.0;
+
+    final qr = Container(
+      padding: EdgeInsets.all(compact ? 12 : 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(compact ? 14 : 18),
+      ),
+      child: QrImageView(
+        data: s.url,
+        version: QrVersions.auto,
+        size: qrSize,
+        backgroundColor: Colors.white,
+      ),
+    );
+
+    final info = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          compact ? '用手机扫上面的二维码' : '用手机扫左边的二维码',
+          style: TextStyle(
+              fontSize: compact ? 18 : 22, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '打开后是一个表单：填地址、账号、密码，点「保存到电视」。\n'
+          '电视会立刻保存并连接，不用在这边按任何键。',
+          style: TextStyle(
+              fontSize: compact ? 13.5 : 15,
+              height: 1.8,
+              color: TvColors.textDim),
+        ),
+        const SizedBox(height: 16),
+        _kv('手机要打开的地址', s.url),
+        const SizedBox(height: 10),
+        const Text(
+          '扫不出来？在手机浏览器里把上面这行地址手动敲进去也一样。',
+          style: TextStyle(fontSize: 13, color: TvColors.textDim),
+        ),
+        const SizedBox(height: 18),
+        _statusCard(),
+        const SizedBox(height: 16),
+        const Text(
+          '注意：手机和电视必须在同一个 Wi-Fi / 局域网里。\n'
+          '这个页面关掉之后，二维码立即失效。',
+          style: TextStyle(fontSize: 13, height: 1.8, color: TvColors.textDim),
+        ),
+      ],
+    );
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(30, 10, 30, 30),
+      padding: EdgeInsets.fromLTRB(
+          compact ? 14 : 30, compact ? 6 : 10, compact ? 14 : 30, 24),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 980),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ---- 二维码 ----
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: QrImageView(
-                  data: s.url,
-                  version: QrVersions.auto,
-                  size: 300,
-                  backgroundColor: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 34),
-              // ---- 说明 ----
-              Expanded(
-                child: Column(
+          child: compact
+              // 手机上二维码 + 一长串说明横排 = 两边都被挤扁，改成上下堆
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(child: qr),
+                    const SizedBox(height: 18),
+                    info,
+                  ],
+                )
+              : Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '用手机扫左边的二维码',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      '打开后是一个表单：填地址、账号、密码，点「保存到电视」。\n'
-                      '电视会立刻保存并连接，不用在这边按任何键。',
-                      style: TextStyle(
-                          fontSize: 15, height: 1.8, color: TvColors.textDim),
-                    ),
-                    const SizedBox(height: 18),
-                    _kv('手机要打开的地址', s.url),
-                    const SizedBox(height: 10),
-                    const Text(
-                      '扫不出来？在手机浏览器里把上面这行地址手动敲进去也一样。',
-                      style: TextStyle(fontSize: 13, color: TvColors.textDim),
-                    ),
-                    const SizedBox(height: 22),
-                    _statusCard(),
-                    const SizedBox(height: 18),
-                    const Text(
-                      '注意：手机和电视必须在同一个 Wi-Fi / 局域网里。\n'
-                      '这个页面关掉之后，二维码立即失效。',
-                      style: TextStyle(
-                          fontSize: 13, height: 1.8, color: TvColors.textDim),
-                    ),
+                    qr,
+                    const SizedBox(width: 34),
+                    Expanded(child: info),
                   ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import 'keys.dart';
 import 'tv_widgets.dart';
@@ -39,6 +40,7 @@ class TvListPanel extends StatefulWidget {
     this.subtitle,
     this.footer,
     this.maxWidth = 780,
+    this.headerAction,
   });
 
   final String title;
@@ -49,13 +51,17 @@ class TvListPanel extends StatefulWidget {
   final Widget? footer;
   final double maxWidth;
 
+  /// 标题右边的小按钮（手机上没有左侧菜单，需要它把"添加账号"之类
+  /// 的入口放到一眼能看到、手指够得着的地方）。电视上传 null。
+  final Widget? headerAction;
+
   @override
   State<TvListPanel> createState() => _TvListPanelState();
 }
 
 class _TvListPanelState extends State<TvListPanel> {
   int _index = 0;
-  static const double _rowH = 74;
+  double _rowH = 74;
   final ScrollController _scroll = ScrollController();
 
   @override
@@ -115,6 +121,11 @@ class _TvListPanelState extends State<TvListPanel> {
     final n = widget.items.length;
     if (n > 0 && _index >= n) _index = n - 1;
 
+    // 手机上的行高稍微收一点，但保证 ≥ 56dp 的触摸目标
+    final compact = isCompact(context);
+    _rowH = compact ? 70 : 74;
+    final hPad = pagePad(context);
+
     return Focus(
       focusNode: widget.focusNode,
       onKeyEvent: _onKey,
@@ -122,15 +133,19 @@ class _TvListPanelState extends State<TvListPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(30, 20, 30, 8),
-            child: PanelTitle(widget.title),
+            padding: EdgeInsets.fromLTRB(hPad, compact ? 10 : 20, hPad, 6),
+            child: PanelTitle(widget.title, trailing: widget.headerAction),
           ),
           if (widget.subtitle != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(30, 0, 30, 14),
+              padding: EdgeInsets.fromLTRB(hPad, 0, hPad, compact ? 8 : 14),
               child: Text(
                 widget.subtitle!,
-                style: const TextStyle(fontSize: 14, color: TvColors.textDim),
+                style: TextStyle(
+                  fontSize: compact ? 12.5 : 14,
+                  height: 1.5,
+                  color: TvColors.textDim,
+                ),
               ),
             ),
           Expanded(
@@ -139,14 +154,15 @@ class _TvListPanelState extends State<TvListPanel> {
                 constraints: BoxConstraints(maxWidth: widget.maxWidth),
                 child: ListView.builder(
                   controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+                  padding: EdgeInsets.fromLTRB(
+                      compact ? 10 : 24, 4, compact ? 10 : 24, 16),
                   itemCount: widget.items.length + 1,
                   itemBuilder: (context, i) {
                     if (i == widget.items.length) {
                       return Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-                        child: widget.footer ??
-                            const SizedBox.shrink(),
+                        padding: EdgeInsets.fromLTRB(
+                            compact ? 6 : 16, 18, compact ? 6 : 16, 8),
+                        child: widget.footer ?? const SizedBox.shrink(),
                       );
                     }
                     final it = widget.items[i];
@@ -155,6 +171,7 @@ class _TvListPanelState extends State<TvListPanel> {
                       child: SizedBox(
                         height: _rowH - 6,
                         child: TvRow(
+                          height: _rowH - 6,
                           focused: widget.focusNode.hasFocus && i == _index,
                           title: it.title,
                           subtitle: it.subtitle,

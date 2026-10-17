@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/downloader.dart';
 import '../data/models.dart';
@@ -272,65 +273,101 @@ class _DownloadPageState extends State<DownloadPage> {
 
   Widget _header() {
     final segs = _rel.split('/').where((e) => e.isNotEmpty).toList();
+    final compact = isCompact(context);
+    final fs = compact ? 13.5 : 15.0;
+
+    final crumbs = Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: compact ? 4 : 6,
+      children: [
+        GestureDetector(
+          onTap: () => _enter(''),
+          child: Text('download',
+              style: TextStyle(
+                fontSize: fs,
+                color: segs.isEmpty ? TvColors.text : TvColors.textDim,
+                fontWeight: segs.isEmpty ? FontWeight.w700 : FontWeight.w400,
+              )),
+        ),
+        for (var i = 0; i < segs.length; i++) ...[
+          const Icon(Icons.chevron_right, size: 16, color: TvColors.textDim),
+          GestureDetector(
+            onTap: () => _enter(segs.take(i + 1).join('/')),
+            child: Text(
+              segs[i],
+              style: TextStyle(
+                fontSize: fs,
+                color: i == segs.length - 1 ? TvColors.text : TvColors.textDim,
+                fontWeight:
+                    i == segs.length - 1 ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+
+    final title = Text('软件下载',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+            fontSize: compact ? 19 : 24, fontWeight: FontWeight.w700));
+
+    final back = IconButton(
+      onPressed: () => Navigator.of(context).pop(),
+      icon: const Icon(Icons.arrow_back),
+      tooltip: '返回工具',
+    );
+
+    final refresh = compact
+        ? IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: '刷新',
+          )
+        : TextButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('刷新'),
+          );
+
+    // 手机上"返回 + 标题 + 面包屑 + 项数 + 刷新"一行塞不下，面包屑挪到第二行
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                back,
+                Expanded(child: title),
+                refresh,
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 48, right: 6, bottom: 2),
+              child: crumbs,
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back),
-            tooltip: '返回工具',
-          ),
+          back,
           const SizedBox(width: 6),
-          const Text('软件下载',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+          title,
           const SizedBox(width: 16),
-          Expanded(
-            child: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 6,
-              children: [
-                GestureDetector(
-                  onTap: () => _enter(''),
-                  child: Text('download',
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: segs.isEmpty ? TvColors.text : TvColors.textDim,
-                        fontWeight:
-                            segs.isEmpty ? FontWeight.w700 : FontWeight.w400,
-                      )),
-                ),
-                for (var i = 0; i < segs.length; i++) ...[
-                  const Icon(Icons.chevron_right,
-                      size: 16, color: TvColors.textDim),
-                  GestureDetector(
-                    onTap: () => _enter(segs.take(i + 1).join('/')),
-                    child: Text(
-                      segs[i],
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: i == segs.length - 1
-                            ? TvColors.text
-                            : TvColors.textDim,
-                        fontWeight: i == segs.length - 1
-                            ? FontWeight.w700
-                            : FontWeight.w400,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+          Expanded(child: crumbs),
           if (!_loading)
             Text('${_entries.length} 项',
                 style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
           const SizedBox(width: 12),
-          TextButton.icon(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('刷新'),
-          ),
+          refresh,
         ],
       ),
     );

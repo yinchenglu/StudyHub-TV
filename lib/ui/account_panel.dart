@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
@@ -151,6 +152,7 @@ class _AccountPanelState extends State<AccountPanel> {
     ];
 
     final lib = app.libraryRoot;
+    final compact = isCompact(context);
     return TvListPanel(
       title: '账户',
       subtitle: accounts.isEmpty
@@ -159,6 +161,21 @@ class _AccountPanelState extends State<AccountPanel> {
       items: items,
       focusNode: widget.focusNode,
       onRequestMenu: widget.onRequestMenu,
+      // 手机上把「添加账号」提到标题右边：不滚动就能看见，手指也好按
+      headerAction: compact
+          ? FilledButton.icon(
+              onPressed: () => setState(() {
+                _creating = true;
+                _editing = null;
+              }),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('添加'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                textStyle: const TextStyle(fontSize: 14),
+              ),
+            )
+          : null,
       footer: Text(
         '${lib.isEmpty ? '没识别到 StudyHub-TV 目录，当前按账号根目录浏览。\n' : '媒体库目录：$lib\n'}'
         '地址示例：群晖 http://192.168.1.10:5005   ·   '
@@ -176,26 +193,13 @@ class _AccountPanelState extends State<AccountPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 30, 4),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: _onBack,
-                icon: const Icon(Icons.arrow_back),
-                tooltip: '返回账户列表',
-              ),
-              const SizedBox(width: 6),
-              Text(
-                _creating ? '添加账号' : '编辑账号',
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(width: 14),
-              const Text(
-                '（返回键可以直接回列表）',
-                style: TextStyle(fontSize: 13, color: TvColors.textDim),
-              ),
-            ],
+        PageHeader(
+          title: _creating ? '添加账号' : '编辑账号',
+          subtitle: '返回键可以直接回列表',
+          leading: IconButton(
+            onPressed: _onBack,
+            icon: const Icon(Icons.arrow_back),
+            tooltip: '返回账户列表',
           ),
         ),
         Expanded(

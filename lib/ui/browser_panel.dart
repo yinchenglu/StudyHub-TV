@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
@@ -127,8 +128,14 @@ class _BrowserPanelState extends State<BrowserPanel> {
     }
   }
 
-  static const double _gap = 14;
-  static const double _pad = 22;
+  static const double _gapWide = 14;
+  static const double _gapNarrow = 9;
+  static const double _padWide = 22;
+  static const double _padNarrow = 11;
+
+  // 当前实际使用的间距（随窗口宽度切换，_ensureVisible 要用）
+  double _gap = _gapWide;
+  double _pad = _padWide;
 
   // ------------------------------------------------------------- 打开
 
@@ -193,14 +200,16 @@ class _BrowserPanelState extends State<BrowserPanel> {
 
   Widget _header(int count) {
     final crumbs = app.crumbs;
+    final compact = isCompact(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(22, 14, 22, 10),
+      padding: EdgeInsets.fromLTRB(
+          pagePad(context), compact ? 8 : 14, pagePad(context), compact ? 6 : 10),
       child: Row(
         children: [
           Expanded(
             child: Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 6,
+              spacing: compact ? 4 : 6,
               runSpacing: 4,
               children: [
                 for (var i = 0; i < crumbs.length; i++) ...[
@@ -212,7 +221,7 @@ class _BrowserPanelState extends State<BrowserPanel> {
                     child: Text(
                       crumbs[i],
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: compact ? 14 : 16,
                         color: i == crumbs.length - 1
                             ? TvColors.text
                             : TvColors.textDim,
@@ -228,7 +237,7 @@ class _BrowserPanelState extends State<BrowserPanel> {
           ),
           // 分区根目录时把真实路径显示出来：用户一眼能看出
           // 「图片」到底对应服务器上的哪个文件夹（自动识别的结果）
-          if (app.cwd == app.currentBase)
+          if (app.cwd == app.currentBase && !compact)
             Padding(
               padding: const EdgeInsets.only(right: 12),
               child: Text(
@@ -236,15 +245,15 @@ class _BrowserPanelState extends State<BrowserPanel> {
                 style: const TextStyle(fontSize: 12, color: TvColors.textDim),
               ),
             ),
-          if (!app.loading)
+          if (!app.loading && !compact)
             Text(
               '$count 项',
               style: const TextStyle(fontSize: 13, color: TvColors.textDim),
             ),
-          const SizedBox(width: 14),
+          SizedBox(width: compact ? 6 : 14),
           _MiniButton(
             icon: Icons.refresh_rounded,
-            label: '刷新',
+            label: compact ? null : '刷新',
             onTap: app.refresh,
           ),
         ],
@@ -266,23 +275,32 @@ class _BrowserPanelState extends State<BrowserPanel> {
       return EmptyHint(app.section.emptyHint, icon: app.section.icon);
     }
 
+    final compact = isCompact(context);
     return LayoutBuilder(
       builder: (context, c) {
-        // 密度：0 大 / 1 中 / 2 小
-        final target = [340.0, 268.0, 206.0][clampInt(app.store.density, 0, 2)];
+        _gap = compact ? _gapNarrow : _gapWide;
+        _pad = compact ? _padNarrow : _padWide;
+
+        // 密度：0 大 / 1 中 / 2 小。
+        // 手机上的格子要明显小一档 —— 否则 360dp 宽只排得下 1 列，
+        // 一屏看两张图，翻页翻到崩溃。
+        final targets = compact
+            ? const [168.0, 126.0, 96.0]
+            : const [340.0, 268.0, 206.0];
+        final target = targets[clampInt(app.store.density, 0, 2)];
         _cols = clampInt(
           ((c.maxWidth - _pad * 2 + _gap) / (target + _gap)).floor(),
           1,
           12,
         );
         final cardW = (c.maxWidth - _pad * 2 - _gap * (_cols - 1)) / _cols;
-        final nameH = app.store.showNames ? 50.0 : 0.0;
+        final nameH = app.store.showNames ? (compact ? 42.0 : 50.0) : 0.0;
         final artRatio = app.section == Section.images ? 0.74 : 0.62;
         _extent = cardW * artRatio + nameH + 6;
 
         return GridView.builder(
           controller: _scroll,
-          padding: const EdgeInsets.fromLTRB(_pad, 4, _pad, 24),
+          padding: EdgeInsets.fromLTRB(_pad, 4, _pad, 24),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: _cols,
             crossAxisSpacing: _gap,
@@ -325,7 +343,7 @@ class _MiniButton extends StatelessWidget {
   const _MiniButton({required this.icon, required this.label, required this.onTap});
 
   final IconData icon;
-  final String label;
+  final String? label;
   final VoidCallback onTap;
 
   @override
@@ -334,17 +352,21 @@ class _MiniButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: EdgeInsets.symmetric(
+            horizontal: label == null ? 8 : 10, vertical: label == null ? 8 : 6),
         decoration: BoxDecoration(
           color: TvColors.card,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: TvColors.textDim),
-            const SizedBox(width: 6),
-            Text(label,
-                style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
+            Icon(icon, size: label == null ? 20 : 16, color: TvColors.textDim),
+            if (label != null) ...[
+              const SizedBox(width: 6),
+              Text(label!,
+                  style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
+            ],
           ],
         ),
       ),

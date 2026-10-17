@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../native/system_channel.dart';
 import 'keys.dart';
@@ -217,34 +218,30 @@ class _AppManagerPageState extends State<AppManagerPage> {
   }
 
   Widget _header() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back),
-            tooltip: '返回工具',
-          ),
-          const SizedBox(width: 6),
-          const Text('应用管理',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              _loading
-                  ? '正在读取…'
-                  : '共 ${_apps.length} 个 · 第三方 $_thirdParty 个',
-              style: const TextStyle(fontSize: 14, color: TvColors.textDim),
-            ),
-          ),
-          TextButton.icon(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('刷新'),
-          ),
-        ],
+    final compact = isCompact(context);
+    return PageHeader(
+      title: '应用管理',
+      subtitle: _loading
+          ? '正在读取…'
+          : '共 ${_apps.length} 个 · 第三方 $_thirdParty 个',
+      leading: IconButton(
+        onPressed: () => Navigator.of(context).pop(),
+        icon: const Icon(Icons.arrow_back),
+        tooltip: '返回工具',
       ),
+      actions: [
+        compact
+            ? IconButton(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh_rounded),
+                tooltip: '刷新',
+              )
+            : TextButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('刷新'),
+              ),
+      ],
     );
   }
 
@@ -260,7 +257,7 @@ class _AppManagerPageState extends State<AppManagerPage> {
           width: c.maxWidth > 900 ? 900 : c.maxWidth,
           child: ListView.builder(
             controller: _scroll,
-            padding: const EdgeInsets.fromLTRB(22, 6, 22, 22),
+            padding: EdgeInsets.fromLTRB(pagePad(context), 6, pagePad(context), 22),
             itemCount: _apps.length,
             itemBuilder: (context, i) => _row(_apps[i], i),
           ),

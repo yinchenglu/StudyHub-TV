@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/thumb_cache.dart';
 import '../native/system_channel.dart';
@@ -173,7 +174,8 @@ class _MemoryPageState extends State<MemoryPage> {
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
                     : SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
+                        padding: EdgeInsets.fromLTRB(
+                            pagePad(context), 4, pagePad(context), 20),
                         child: Center(
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 820),
@@ -210,27 +212,25 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Widget _header() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 14, 22, 12),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back),
-            tooltip: '返回工具',
-          ),
-          const SizedBox(width: 6),
-          const Text('内存清理',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
-          const SizedBox(width: 14),
-          if (_busy)
-            const SizedBox(
+    return PageHeader(
+      title: '内存清理',
+      subtitle: _mem == null ? null : '整机已用 ${_bytes(_mem!.used)}',
+      leading: IconButton(
+        onPressed: () => Navigator.of(context).pop(),
+        icon: const Icon(Icons.arrow_back),
+        tooltip: '返回工具',
+      ),
+      actions: [
+        if (_busy)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
