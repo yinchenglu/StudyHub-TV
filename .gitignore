@@ -26,3 +26,7 @@ dist/
 android/key.properties
 *.jks
 *.keystore
+
+# Python
+__pycache__/
+*.pyc

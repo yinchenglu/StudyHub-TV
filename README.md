@@ -155,6 +155,36 @@ base64 -w0 upload-keystore.jks   # 结果放进 SIGNING_KEYSTORE_BASE64
 
 `tools/gen_icons.py` 可重新生成图标和电视横幅（改配色只需改脚本里的常量）。
 
+### 镜像到 Gitee（国内下载更快）
+
+GitHub 的 Release 在国内经常拉不动，所以构建完会自动同步一份到 Gitee。
+
+开启只需一步 —— 仓库 Settings → Secrets and variables → Actions →
+New repository secret，名字 `GITEE_TOKEN`，值是 Gitee 的私人令牌：
+
+> Gitee → 右上头像 → 设置 → 安全设置 → 私人令牌 → 生成新令牌
+> 权限至少勾 **projects**（要自动建仓库、传附件、建发行版都靠它）
+
+配好之后每次构建成功，`同步到 Gitee` 这个 job 会：
+
+1. **推代码**：`main` 分支 + 所有 `v*` 标签强推到 Gitee（单向镜像）
+2. **建发行版**：推 `v` 标签时，在 Gitee 建同名发行版
+3. **传安装包**：把 `StudyHub-TV-armv7.apk` / `-arm64.apk` 传成发行版附件
+
+Gitee 上没有同名仓库时会**自动建一个**（默认私有；想公开就把
+`.github/workflows/build-apk.yml` 里的 `GITEE_REPO_PRIVATE` 改成 `"false"`）。
+仓库名不同就改 `GITEE_REPO_NAME`。
+
+这个 job 挂了不影响 GitHub 的构建和发布（`continue-on-error: true`，
+失败只在 Actions 总结里留一条黄色警告），本地也能单独跑：
+
+```bash
+GITEE_TOKEN=你的令牌 GITHUB_REF=refs/tags/v1.4.0 GITHUB_REF_NAME=v1.4.0 \
+  python3 tools/sync_gitee.py --dry-run    # 只看计划，不真推
+```
+
+原则：**Gitee 是单向镜像**，别在那边直接提交 —— 每次构建都会强推覆盖。
+
 ## 常见问题
 
 | 现象 | 原因 / 解法 |

@@ -344,3 +344,49 @@ jobs:
             安装方法见仓库 README。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------------------
+  # 镜像到 Gitee（可选，配了 GITEE_TOKEN 才生效）
+  #
+  # 目的：GitHub 只有源码和 Release，国内网络拉 GitHub 很慢；
+  #       这边把代码 + 标签 + 发行版（含 APK 附件）同步到 Gitee。
+  #
+  # 需要：仓库 Settings → Secrets and variables → Actions → New repository secret
+  #       名字 GITEE_TOKEN，值是 Gitee 「设置 → 私人令牌」生成的令牌
+  #       （权限勾 projects；想自动建仓库也需要它）。
+  #
+  # 行为：
+  #   * 每次构建成功都会把 main 分支 + 所有标签强推到 Gitee（单向镜像）
+  #   * 推 v 标签时，在 Gitee 建同名发行版，把两个 APK 传成附件
+  #   * Gitee 上没有同名仓库时会自动建一个（默认私有，
+  #     想公开就改下面的 GITEE_REPO_PRIVATE 为 "false"）
+  #
+  # 失败不影响 GitHub 的构建与发布：continue-on-error + 只打 warning。
+  # --------------------------------------------------------------------
+  gitee:
+    name: 同步到 Gitee
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      # Gitee 上的仓库名，默认和 GitHub 仓库同名（StudyHub-TV）
+      GITEE_REPO_NAME: StudyHub-TV
+      # 自动建仓时是否私有
+      GITEE_REPO_PRIVATE: "true"
+      GITEE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+
+    steps:
+      - name: 拉取代码（要完整历史，镜像才有意义）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 取回刚编译好的 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: StudyHub-TV-APK
+          path: dist
+
+      - name: 推代码 / 建发行版 / 传安装包
+        run: python3 tools/sync_gitee.py
