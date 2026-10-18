@@ -78,6 +78,50 @@ def die(msg):
     sys.exit(1)
 
 
+def pubspec_tag():
+    """把 pubspec 的 version: 1.4.0+2006 变成标签名 v1.4.0。"""
+    try:
+        with open("pubspec.yaml", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("version:"):
+                    return "v" + line.split(":", 1)[1].strip().split("+")[0]
+    except OSError:
+        pass
+    return ""
+
+
+def has_local_tag(tag):
+    """仓库里真的有这个 v 标签，才算"官方发布过"。"""
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "refs/tags/%s" % tag],
+        capture_output=True, text=True).returncode == 0
+
+
+def pick_release_tag():
+    """决定这次要给哪个标签建发行版。
+
+    三种来源，优先级从高到低：
+      1. 本次就是打 v 标签触发的 → 用触发的那个标签
+      2. 手动指定了 GITEE_RELEASE_TAG（网页 Run workflow 时填）→ 用它
+      3. 当前代码的版本号对应一个**已存在**的 v 标签 → 用它补建
+
+    第 3 条是为了"自愈"：GitHub 上早就发过版，但 Gitee 那次同步因为令牌没配
+    失败了，发行版就永远是空的。之后再往 main 推任何一次代码，都能把缺的那个
+    补上，不用为了修这个再去挪标签或发新版本。
+    """
+    if IS_TAG and REF_NAME:
+        return REF_NAME, "本次由 %s 标签触发" % REF_NAME
+
+    override = os.environ.get("GITEE_RELEASE_TAG", "").strip()
+    if override:
+        return override, "手动指定 GITEE_RELEASE_TAG"
+
+    guess = pubspec_tag()
+    if guess and has_local_tag(guess):
+        return guess, "当前版本 %s 已打标签，补齐 Gitee 上缺失的发行版" % guess
+    return "", ""
+
+
 # ----------------------------------------------------------------------
 # API
 # ----------------------------------------------------------------------
@@ -163,6 +207,8 @@ def main():
             "请确认：仓库 Settings → Secrets and variables → Actions 里的 "
             "**Repository secrets**（不是 Environment secrets）有一项叫 GITEE_TOKEN；\n"
             "也确认它是建在 StudyHub-TV 这个仓库下，而不是 StudyHub 之类的其他仓库。")
+    # 只打印长度，不打印内容：长度能区分"完全没读到"和"读到了但令牌不对"
+    log("→ 已读到 GITEE_TOKEN（%d 个字符）" % len(TOKEN))
 
     log("→ 校验令牌")
     me = api("GET", "/user")
@@ -247,12 +293,12 @@ def main():
             die("%s\n（检查令牌是否有 projects 写权限、仓库是否为空仓库）" % e)
 
     # ---------- 发行版 ----------
-    if not IS_TAG:
+    tag, why = pick_release_tag()
+    if not tag:
         log("→ 本次不是 v 标签构建，只镜像代码，不发 Gitee 发行版")
         return
 
-    tag = REF_NAME
-    log("→ 处理 Gitee 发行版 %s" % tag)
+    log("→ 处理 Gitee 发行版 %s（%s）" % (tag, why))
     release = None
     try:
         release = api("GET", "/repos/%s/releases/tags/%s" % (full_name, tag))

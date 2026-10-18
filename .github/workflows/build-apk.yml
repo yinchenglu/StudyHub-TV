@@ -6,6 +6,11 @@ name: 编译 APK
 #   3. 网页上手动 Run workflow
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "补建哪个版本的 Gitee 发行版（例：v1.4.0）。留空则自动用当前版本号"
+        required: false
+        default: ""
   push:
     branches: [main, master]
     tags: ["v*"]
@@ -380,6 +385,8 @@ jobs:
       # 自动建仓时是否私有（已指定 GITEE_REPO_PATH，自动建仓不再触发）
       GITEE_REPO_PRIVATE: "false"
       GITEE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+      # 网页 Run workflow 时手填的标签（留空 = 按当前 pubspec 版本自动判断）
+      GITEE_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
 
     steps:
       - name: 拉取代码（要完整历史，镜像才有意义）
@@ -398,13 +405,16 @@ jobs:
           set -o pipefail
           python3 tools/sync_gitee.py 2>&1 | tee /tmp/gitee.log
 
-      # 日志接口要 admin 权限，拿不到；失败时把日志推到 ci-log 分支，
-      # 这样远程也能看到到底哪一步不对（令牌缺失 / 权限不足 / 附件超限）。
-      - name: 同步失败时把日志推回 ci-log 分支
-        if: failure()
+      # 日志接口要 admin 权限，拿不到；所以不管成功失败都把日志推到 ci-log 分支，
+      # 这样在 Gitee/手机上打开 ci-gitee.log 就能看到到底同步到哪一步、有没有报错。
+      # （只推失败日志的话，"job 绿着但发行版是空的"这种情况永远查不出原因）
+      - name: 把同步日志推到 ci-log 分支
+        if: always()
         run: |
           set -e
-          [ -f /tmp/gitee.log ] || exit 0
+          if [ ! -f /tmp/gitee.log ]; then
+            echo "（同步脚本没有运行，没有日志产生）" > /tmp/gitee.log
+          fi
           git config user.name "studyhub-tv-ci"
           git config user.email "ci@users.noreply.github.com"
           git checkout -B ci-log
