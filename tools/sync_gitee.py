@@ -35,7 +35,8 @@ TIMEOUT = 60
 UPLOAD_TIMEOUT = 600
 DRY = "--dry-run" in sys.argv
 
-TOKEN = os.environ.get("GITEE_TOKEN", "").strip()
+TOKEN = (os.environ.get("GITEE_TOKEN", "").strip()
+         or os.environ.get("GITEE_TOKEN_VAR", "").strip())
 REF = os.environ.get("GITHUB_REF", "")
 REF_NAME = os.environ.get("GITHUB_REF_NAME", "")
 DEFAULT_BRANCH = os.environ.get("GITEE_BRANCH", "").strip() or "main"
@@ -203,10 +204,13 @@ def git(args, cwd="."):
 
 def main():
     if not TOKEN:
-        die("没配 GITEE_TOKEN —— 同步到 Gitee 需要它。\n"
-            "请确认：仓库 Settings → Secrets and variables → Actions 里的 "
-            "**Repository secrets**（不是 Environment secrets）有一项叫 GITEE_TOKEN；\n"
-            "也确认它是建在 StudyHub-TV 这个仓库下，而不是 StudyHub 之类的其他仓库。")
+        die("没配 GITEE_TOKEN —— 同步到 Gitee 需要它（secrets 和 vars 里都没读到）。\n"
+            "逐条核对：\n"
+            "  1. 打开 https://github.com/yinchenglu/StudyHub-TV/settings/secrets/actions\n"
+            "     地址里的仓库名必须是 StudyHub-TV —— 建到 StudyHub 那边本仓库读不到；\n"
+            "  2. 那一页要有「Repository secrets」区块，名字正好是 GITEE_TOKEN\n"
+            "     （不是 Variables 标签页，不是 Environment secrets，没有多余空格）；\n"
+            "  3. 建在 Environment 里的令牌，job 不声明 environment 就读不到。")
     # 只打印长度，不打印内容：长度能区分"完全没读到"和"读到了但令牌不对"
     log("→ 已读到 GITEE_TOKEN（%d 个字符）" % len(TOKEN))
 

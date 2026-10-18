@@ -376,6 +376,9 @@ jobs:
     continue-on-error: true
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      # 兜底：很多人会把令牌错建到「Variables」标签页而不是「Secrets」，
+      # 那样 secrets.GITEE_TOKEN 永远是空的。这里同时读一下 vars。
+      GITEE_TOKEN_VAR: ${{ vars.GITEE_TOKEN }}
       # 镜像仓库的完整路径。用户 2026-10-18 确认就是这个地址：
       # https://gitee.com/yin-cheng-lu/StudyHub-TV
       # 写死后不再自动找/建，避免把仓库建到别的账号下。
@@ -400,10 +403,27 @@ jobs:
           name: StudyHub-TV-APK
           path: dist
 
+      - name: 检查令牌是否注入
+        run: |
+          # 只打印长度，不打印内容。长度能区分三种情况：
+          #   0   → 这个 job 根本看不到令牌（建到别的仓库 / 建成了 Environment / 名字不对）
+          #   >0  → 读到了，那就是令牌本身或权限的问题
+          # 同时写一份到 /tmp/gitee.log，这样结果会跟着日志推到 ci-log 分支，
+          # 不登录 GitHub 也能看到。
+          {
+            echo "== 令牌注入检查 =="
+            echo "secrets.GITEE_TOKEN 长度 = ${#GITEE_TOKEN}"
+            echo "vars.GITEE_TOKEN 长度 = ${#GITEE_TOKEN_VAR}"
+            if [ ${#GITEE_TOKEN} -eq 0 ] && [ ${#GITEE_TOKEN_VAR} -eq 0 ]; then
+              echo "::warning::这个 job 读不到 GITEE_TOKEN（secrets 和 vars 都是空的）"
+            fi
+            echo
+          } | tee /tmp/gitee.log
+
       - name: 推代码 / 建发行版 / 传安装包
         run: |
           set -o pipefail
-          python3 tools/sync_gitee.py 2>&1 | tee /tmp/gitee.log
+          python3 tools/sync_gitee.py 2>&1 | tee -a /tmp/gitee.log
 
       # 日志接口要 admin 权限，拿不到；所以不管成功失败都把日志推到 ci-log 分支，
       # 这样在 Gitee/手机上打开 ci-gitee.log 就能看到到底同步到哪一步、有没有报错。
