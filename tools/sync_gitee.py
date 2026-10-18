@@ -23,8 +23,11 @@
 import json
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -149,13 +152,82 @@ def api(method, path, params=None, body=None):
 
 
 def upload_asset(full_name, release_id, filepath):
-    """multipart 上传一个附件（urllib 够用，不必装 requests）。"""
+    """multipart 上传一个附件。
+
+    这里踩过一个坑（2026-10-18，v1.4.0）：用 urllib 直接 POST，14.6MB 的 APK
+    从 GitHub 机房传到 Gitee 会在 sendall 上卡死，最后报
+    "URLError: The write operation timed out"（600 秒一点进度都没有）。
+    原因不是文件太大，而是这条跨境链路上长连接容易被中间设备掐掉、而且
+    urllib 一旦卡住只能等到超时，没有"慢到一定程度就放弃重来"的能力。
+
+    所以改成用 curl，理由是它能干三件 urllib 干不了的事：
+      * --speed-limit/--speed-time：传输掉到 2KB/s 超过 120 秒就主动放弃，
+        不用干等十分钟；
+      * --retry + 外层重试：断了立刻重来，而不是整条流程从头再跑一遍；
+      * -H "Expect:"：关掉 100-continue，避免网关先挂住握手。
+    curl 不存在（本地 Windows 跑脚本时）就退回 urllib。
+    """
     filename = os.path.basename(filepath)
     size = os.path.getsize(filepath)
     if size > 100 * 1024 * 1024:
         raise RuntimeError("%s 有 %.1f MB，超过 Gitee 附件 100MB 上限"
                            % (filename, size / 1048576.0))
 
+    url = "%s/repos/%s/releases/%s/attach_files" % (API, full_name, release_id)
+    if shutil.which("curl"):
+        return _upload_with_curl(url, filepath, filename)
+    return _upload_with_urllib(url, filepath, filename)
+
+
+def _upload_with_curl(url, filepath, filename, attempts=3):
+    ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    last = ""
+    for attempt in range(1, attempts + 1):
+        # 用 tempfile 拼路径而不是写死 /tmp：本地 Windows 上 curl.exe 是不认
+        # "/tmp" 的（会报 curl: (23) client returned ERROR on write）。
+        resp = os.path.join(tempfile.gettempdir(),
+                            "gitee-upload-%d.json" % attempt)
+        started = time.time()
+        p = subprocess.run([
+            "curl", "-sS", "--http1.1",
+            "-H", "Expect:",                     # 别走 100-continue
+            "-H", "User-Agent: StudyHub-TV-CI",
+            "--max-time", "900",
+            "--speed-limit", "4096",             # 低于 4KB/s ...
+            "--speed-time", "90",                # ... 持续 90 秒就放弃重来
+            "-o", resp,
+            "-w", "%{http_code}",
+            "-F", "access_token=%s" % TOKEN,
+            "-F", "file=@%s;type=%s" % (filepath, ctype),
+            url,
+        ], capture_output=True, text=True)
+
+        code = (p.stdout or "").strip()[-3:]
+        body = ""
+        if os.path.exists(resp):
+            with open(resp, "r", encoding="utf-8", errors="replace") as f:
+                body = f.read()
+            os.remove(resp)
+
+        if code in ("200", "201"):
+            log("    完成，用时 %.0f 秒" % (time.time() - started))
+            try:
+                return json.loads(body) if body.strip() else {}
+            except ValueError:
+                return {}
+
+        # curl 自己失败（超时/断流）时 stdout 里不是 HTTP 码，p.stderr 才有原因
+        reason = mask((p.stderr or "").strip())[:200] or "HTTP %s" % code
+        last = "%s %s" % (reason, mask(body)[:200])
+        log("    第 %d/%d 次失败（%.0f 秒）：%s"
+            % (attempt, attempts, time.time() - started, last))
+        if attempt < attempts:
+            time.sleep(10)
+    raise RuntimeError("上传 %s 失败（已试 %d 次）：%s" % (filename, attempts, last))
+
+
+def _upload_with_urllib(url, filepath, filename):
+    """curl 不存在时的退路（本地 Windows 上跑脚本会走这里）。"""
     boundary = "----studyhub" + uuid.uuid4().hex
     ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     head = (
@@ -168,9 +240,9 @@ def upload_asset(full_name, release_id, filepath):
     with open(filepath, "rb") as f:
         payload = head + f.read() + tail
 
-    url = "%s/repos/%s/releases/%s/attach_files?access_token=%s" % (
-        API, full_name, release_id, urllib.parse.quote(TOKEN, safe=""))
-    req = urllib.request.Request(url, data=payload, method="POST")
+    req = urllib.request.Request(
+        url + "?access_token=" + urllib.parse.quote(TOKEN, safe=""),
+        data=payload, method="POST")
     req.add_header("Content-Type", "multipart/form-data; boundary=%s" % boundary)
     req.add_header("Accept", "application/json")
     req.add_header("User-Agent", "StudyHub-TV-CI")
@@ -181,6 +253,8 @@ def upload_asset(full_name, release_id, filepath):
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:400]
         raise RuntimeError("上传 %s 失败：HTTP %s %s" % (filename, e.code, detail))
+    except urllib.error.URLError as e:
+        raise RuntimeError("上传 %s 失败：%s" % (filename, e.reason))
 
 
 # ----------------------------------------------------------------------
@@ -351,6 +425,7 @@ def main():
         warn("dist/ 里没有 APK，Gitee 发行版只建了壳")
         return
 
+    failed = []
     for path in apks:
         name = os.path.basename(path)
         if name in existing:
@@ -364,7 +439,14 @@ def main():
             res = upload_asset(full_name, rid, path)
             log("    -> %s" % (res.get("browser_download_url") or "已上传"))
         except RuntimeError as e:
-            die(str(e))
+            # 一个包失败不影响另一个：两个都传完再统一报错，
+            # 这样重跑时已经传上去的那个会被"已存在，跳过"，不会白传。
+            log("::error::" + mask(str(e)))
+            failed.append(name)
+
+    if failed:
+        die("这些附件没传上去：%s（发行版本身已建好，重跑会自动跳过已成功的）"
+            % ", ".join(failed))
 
     # 传完再读一遍，确认真的落地了 —— 不然 job 绿着、用户点进去啥也没有，
     # 比直接报错更难查（v1.4.0 第一次跑就是这么被坑的）。
