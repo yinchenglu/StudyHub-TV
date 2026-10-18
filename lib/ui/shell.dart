@@ -244,12 +244,21 @@ class _ShellState extends State<Shell> {
       );
     }
 
-    if (app.account == null) {
+    // ⚠️ 这两个"拦路页"只拦**媒体分区**（图片/视频/音频）。
+    //
+    // v1.4 的写法没判断 section，后果很严重：没有账号时，点底部导航的「账户」
+    // 或者点欢迎页那个「添加我的第一个账号」，内容区还是原样再画一遍欢迎页 ——
+    // 用户看到的是"按了没反应"（就是反馈的"点不了添加服务器按钮"）；
+    // 连不上 NAS 时更糟，「工具」「设置」全被错误页顶掉，什么都看不到。
+    // 账户/设置/工具压根不需要连接媒体库，必须让它们照常显示自己的内容。
+    final isMedia = app.section.isMedia;
+
+    if (isMedia && app.account == null) {
       return _Welcome(onAdd: () => _go(Section.accounts));
     }
 
     // 连不上：把原因和出口都给出来，别让用户对着空列表猜
-    if (!app.connected && app.error != null) {
+    if (isMedia && !app.connected && app.error != null) {
       return Padding(
         padding: EdgeInsets.all(isCompact(context) ? 16 : 40),
         child: Column(
