@@ -10,6 +10,7 @@
 
 需要的环境变量：
   GITEE_TOKEN        必填  Gitee 私人令牌（仓库 Secrets 里的 GITEE_TOKEN）
+  GITEE_REPO_PATH    可选  完整路径 owner/repo，填了就直接用它，不再自动找/建
   GITEE_REPO_NAME    可选  Gitee 仓库名，默认取 GitHub 仓库名
   GITEE_REPO_PRIVATE 可选  自动建仓时是否私有，默认 true
   GITEE_BRANCH       可选  推哪个分支，默认 main
@@ -43,6 +44,8 @@ REPO_NAME = (
     or os.environ.get("GITHUB_REPOSITORY", "").split("/")[-1]
     or "StudyHub-TV"
 )
+# 明确指定了 owner/repo 就照着用：镜像仓库名和 GitHub 不一样时靠这个兜底
+REPO_PATH = os.environ.get("GITEE_REPO_PATH", "").strip().strip("/")
 PRIVATE = os.environ.get("GITEE_REPO_PRIVATE", "true").strip().lower() != "false"
 IS_TAG = REF.startswith("refs/tags/v")
 DIST = os.environ.get("DIST_DIR", "dist")
@@ -167,22 +170,33 @@ def main():
     log("  Gitee 账号：%s" % login)
 
     # ---------- 找仓库，没有就建 ----------
-    log("→ 找仓库 %s" % REPO_NAME)
     full_name = None
-    for page in range(1, 6):
+    if REPO_PATH and "/" in REPO_PATH:
+        full_name = REPO_PATH
+        log("→ 使用指定仓库 %s" % full_name)
         try:
-            repos = api("GET", "/user/repos",
-                        {"per_page": 100, "page": page, "sort": "full_name"}) or []
+            info = api("GET", "/repos/%s" % full_name) or {}
+            log("  已存在：%s（私有=%s）" % (info.get("full_name", full_name),
+                                             info.get("private")))
         except RuntimeError as e:
-            warn("列仓库失败（%s），改用 %s/%s 直接试" % (e, login, REPO_NAME))
-            repos = []
-            break
-        for r in repos:
-            if (r.get("path") or r.get("name") or "").lower() == REPO_NAME.lower():
-                full_name = r.get("full_name") or ("%s/%s" % (login, r.get("path")))
+            die("仓库 %s 读不到：%s\n（检查 GITEE_REPO_PATH 拼写，或令牌有没有权限）"
+                % (full_name, e))
+    else:
+        log("→ 找仓库 %s" % REPO_NAME)
+        for page in range(1, 6):
+            try:
+                repos = api("GET", "/user/repos",
+                            {"per_page": 100, "page": page, "sort": "full_name"}) or []
+            except RuntimeError as e:
+                warn("列仓库失败（%s），改用 %s/%s 直接试" % (e, login, REPO_NAME))
+                repos = []
                 break
-        if full_name or len(repos) < 100:
-            break
+            for r in repos:
+                if (r.get("path") or r.get("name") or "").lower() == REPO_NAME.lower():
+                    full_name = r.get("full_name") or ("%s/%s" % (login, r.get("path")))
+                    break
+            if full_name or len(repos) < 100:
+                break
 
     if not full_name:
         full_name = "%s/%s" % (login, REPO_NAME)

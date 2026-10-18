@@ -173,7 +173,12 @@ New repository secret，名字 `GITEE_TOKEN`，值是 Gitee 的私人令牌：
 
 Gitee 上没有同名仓库时会**自动建一个**（默认私有；想公开就把
 `.github/workflows/build-apk.yml` 里的 `GITEE_REPO_PRIVATE` 改成 `"false"`）。
-仓库名不同就改 `GITEE_REPO_NAME`。
+
+如果你的镜像仓库名不叫 `StudyHub-TV`（或者放在别的账号/组织下），把 job 的 env 改成：
+
+```yaml
+GITEE_REPO_PATH: 你的用户名/仓库名    # 填了就用它，不再自动找/建
+```
 
 这个 job 挂了不影响 GitHub 的构建和发布（`continue-on-error: true`，
 失败只在 Actions 总结里留一条黄色警告），本地也能单独跑：

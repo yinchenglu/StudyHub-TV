@@ -372,6 +372,9 @@ jobs:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       # Gitee 上的仓库名，默认和 GitHub 仓库同名（StudyHub-TV）
       GITEE_REPO_NAME: StudyHub-TV
+      # 镜像仓库不叫这个名字（或在别的账号/组织下）时，填完整路径取消下面注释，
+      # 填了就直接用它，不再自动找/建：
+      # GITEE_REPO_PATH: someone/studyhub-tv
       # 自动建仓时是否私有
       GITEE_REPO_PRIVATE: "true"
       GITEE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
