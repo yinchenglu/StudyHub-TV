@@ -159,8 +159,10 @@ def git(args, cwd="."):
 
 def main():
     if not TOKEN:
-        warn("没配 GITEE_TOKEN，跳过 Gitee 镜像（GitHub 那边不受影响）")
-        return
+        die("没配 GITEE_TOKEN —— 同步到 Gitee 需要它。\n"
+            "请确认：仓库 Settings → Secrets and variables → Actions 里的 "
+            "**Repository secrets**（不是 Environment secrets）有一项叫 GITEE_TOKEN；\n"
+            "也确认它是建在 StudyHub-TV 这个仓库下，而不是 StudyHub 之类的其他仓库。")
 
     log("→ 校验令牌")
     me = api("GET", "/user")
@@ -313,6 +315,22 @@ def main():
             log("    -> %s" % (res.get("browser_download_url") or "已上传"))
         except RuntimeError as e:
             die(str(e))
+
+    # 传完再读一遍，确认真的落地了 —— 不然 job 绿着、用户点进去啥也没有，
+    # 比直接报错更难查（v1.4.0 第一次跑就是这么被坑的）。
+    if not DRY:
+        try:
+            got = api("GET", "/repos/%s/releases/tags/%s" % (full_name, tag)) or {}
+            landed = {f.get("name") for f in (got.get("attach_files") or [])}
+            names = {os.path.basename(p) for p in apks}
+            missing = names - landed
+            if missing:
+                warn("发行版存在，但这些附件没查到：%s（附件列表接口可能只返回部分）"
+                     % ", ".join(sorted(missing)))
+            else:
+                log("  回读确认：%d 个附件都在" % len(landed))
+        except RuntimeError as e:
+            warn("回读发行版失败：%s" % e)
 
     log("✔ Gitee 同步完成：https://gitee.com/%s/releases/tag/%s" % (full_name, tag))
 

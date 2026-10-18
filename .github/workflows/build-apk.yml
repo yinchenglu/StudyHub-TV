@@ -358,10 +358,11 @@ jobs:
   # 行为：
   #   * 每次构建成功都会把 main 分支 + 所有标签强推到 Gitee（单向镜像）
   #   * 推 v 标签时，在 Gitee 建同名发行版，把两个 APK 传成附件
-  #   * Gitee 上没有同名仓库时会自动建一个（默认私有，
-  #     想公开就改下面的 GITEE_REPO_PRIVATE 为 "false"）
+  #   * 仓库地址写死在 env 的 GITEE_REPO_PATH（yin-cheng-lu/StudyHub-TV）
   #
   # 失败不影响 GitHub 的构建与发布：continue-on-error + 只打 warning。
+  # 但**没配令牌会明确报错**（不再静默跳过）—— 静默跳过会变成"job 绿着
+  # 却什么都没同步"，比直接红更难查。
   # --------------------------------------------------------------------
   gitee:
     name: 同步到 Gitee
@@ -370,13 +371,14 @@ jobs:
     continue-on-error: true
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      # 镜像仓库的完整路径。用户 2026-10-18 确认就是这个地址：
+      # https://gitee.com/yin-cheng-lu/StudyHub-TV
+      # 写死后不再自动找/建，避免把仓库建到别的账号下。
+      GITEE_REPO_PATH: yin-cheng-lu/StudyHub-TV
       # Gitee 上的仓库名，默认和 GitHub 仓库同名（StudyHub-TV）
       GITEE_REPO_NAME: StudyHub-TV
-      # 镜像仓库不叫这个名字（或在别的账号/组织下）时，填完整路径取消下面注释，
-      # 填了就直接用它，不再自动找/建：
-      # GITEE_REPO_PATH: someone/studyhub-tv
-      # 自动建仓时是否私有
-      GITEE_REPO_PRIVATE: "true"
+      # 自动建仓时是否私有（已指定 GITEE_REPO_PATH，自动建仓不再触发）
+      GITEE_REPO_PRIVATE: "false"
       GITEE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
 
     steps:
@@ -392,4 +394,21 @@ jobs:
           path: dist
 
       - name: 推代码 / 建发行版 / 传安装包
-        run: python3 tools/sync_gitee.py
+        run: |
+          set -o pipefail
+          python3 tools/sync_gitee.py 2>&1 | tee /tmp/gitee.log
+
+      # 日志接口要 admin 权限，拿不到；失败时把日志推到 ci-log 分支，
+      # 这样远程也能看到到底哪一步不对（令牌缺失 / 权限不足 / 附件超限）。
+      - name: 同步失败时把日志推回 ci-log 分支
+        if: failure()
+        run: |
+          set -e
+          [ -f /tmp/gitee.log ] || exit 0
+          git config user.name "studyhub-tv-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout -B ci-log
+          cp /tmp/gitee.log ci-gitee.log
+          git add -f ci-gitee.log
+          git commit -m "ci: Gitee 同步日志（${{ github.sha }}）" || exit 0
+          git push -f origin ci-log
