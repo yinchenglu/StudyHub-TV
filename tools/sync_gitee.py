@@ -23,6 +23,7 @@
 import json
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -192,7 +193,7 @@ def _upload_with_curl(url, filepath, filename, attempts=3):
             "curl", "-sS", "--http1.1",
             "-H", "Expect:",                     # 别走 100-continue
             "-H", "User-Agent: StudyHub-TV-CI",
-            "--max-time", "900",
+            "--max-time", "1800",  # 实测一次 14MB 要 850 秒，别卡太紧
             "--speed-limit", "4096",             # 低于 4KB/s ...
             "--speed-time", "90",                # ... 持续 90 秒就放弃重来
             "-o", resp,
@@ -255,6 +256,42 @@ def _upload_with_urllib(url, filepath, filename):
         raise RuntimeError("上传 %s 失败：HTTP %s %s" % (filename, e.code, detail))
     except urllib.error.URLError as e:
         raise RuntimeError("上传 %s 失败：%s" % (filename, e.reason))
+
+
+def release_asset_names(full_name, release_id, tag):
+    """问清楚"这个发行版现在挂了哪些附件"。
+
+    两条路，因为两条都不完全靠谱（2026-10-18 v1.4.0 实测）：
+      * GET /releases/{id}/attach_files —— 官方接口，正常时会返回列表；
+      * 抓发行版页面。`GET /releases/tags/{tag}` 返回的对象里根本没有
+        attach_files 字段，历史上就是靠它做校验，结果每次都误报"附件没查到"。
+    两条都空就当真的没有（宁可重传，也别把已有附件当成没有、也不能反过来）。
+    """
+    names = set()
+    try:
+        files = api("GET", "/repos/%s/releases/%s/attach_files"
+                    % (full_name, release_id)) or []
+        if isinstance(files, dict):
+            files = files.get("files") or files.get("attach_files") or []
+        for f in files:
+            if isinstance(f, dict):
+                names.add(f.get("name") or f.get("file_name"))
+    except RuntimeError as e:
+        warn("读附件列表失败（%s），改用页面兜底" % e)
+
+    names = {n for n in names if n}
+    if names:
+        return names
+
+    try:
+        url = "https://gitee.com/%s/releases/tag/%s" % (full_name, tag)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", "replace")
+        names = {os.path.basename(n) for n in re.findall(r"[\w.\-]+\.apk", html)}
+    except Exception:
+        pass
+    return names
 
 
 # ----------------------------------------------------------------------
@@ -408,14 +445,7 @@ def main():
         die("Gitee 没有返回发行版 id，无法上传附件")
 
     # 已经传过同名的就先跳过，重复跑不会堆一串重复文件
-    existing = set()
-    try:
-        files = api("GET", "/repos/%s/releases/%s/attach_files" % (full_name, rid)) or []
-        if isinstance(files, dict):
-            files = files.get("files") or []
-        existing = {f.get("name") or f.get("file_name") for f in files}
-    except RuntimeError as e:
-        warn("读附件列表失败（%s），继续尝试上传" % e)
+    existing = release_asset_names(full_name, rid, tag)
 
     apks = sorted(
         os.path.join(DIST, n) for n in os.listdir(DIST)
@@ -452,13 +482,12 @@ def main():
     # 比直接报错更难查（v1.4.0 第一次跑就是这么被坑的）。
     if not DRY:
         try:
-            got = api("GET", "/repos/%s/releases/tags/%s" % (full_name, tag)) or {}
-            landed = {f.get("name") for f in (got.get("attach_files") or [])}
+            landed = release_asset_names(full_name, rid, tag)
             names = {os.path.basename(p) for p in apks}
             missing = names - landed
             if missing:
-                warn("发行版存在，但这些附件没查到：%s（附件列表接口可能只返回部分）"
-                     % ", ".join(sorted(missing)))
+                warn("发行版存在，但这几个附件没查到：%s（可能接口只返回部分，"
+                     "先去页面确认一眼再重跑）" % ", ".join(sorted(missing)))
             else:
                 log("  回读确认：%d 个附件都在" % len(landed))
         except RuntimeError as e:
