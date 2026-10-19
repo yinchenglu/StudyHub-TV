@@ -62,10 +62,9 @@ class AppState extends ChangeNotifier {
 
   List<RemoteEntry>? _cached(Section s, String path) => _cache[_cacheKey(s, path)];
 
-  /// 立刻把缓存的内容显示出来（没有就不动）
+  /// 立刻把缓存的内容显示出来（没有就清空，别让上一个分区的条目留在屏幕上）
   void _showCached(Section s, String path) {
-    final hit = _cached(s, path);
-    if (hit != null) _entries = hit;
+    _entries = _cached(s, path) ?? const [];
   }
 
   bool loading = false;
@@ -220,7 +219,6 @@ class AppState extends ChangeNotifier {
     error = null;
     // 先上缓存：切回"视频"时立刻看到上次的剧集列表，不用等网络
     _showCached(s, cwdOf(s));
-    if (s.isMedia && _entries.isEmpty) _entries = const [];
     notifyListeners();
     if (s.isMedia) await refresh();
   }
@@ -270,7 +268,6 @@ class AppState extends ChangeNotifier {
   Future<void> enter(String dirPath) async {
     _cwd[section] = dirPath;
     _showCached(section, dirPath);
-    if (_entries.isEmpty) _entries = const [];
     notifyListeners();
     await refresh();
   }
@@ -292,7 +289,6 @@ class AppState extends ChangeNotifier {
 
     _cwd[section] = parent;
     _showCached(section, parent);
-    if (_entries.isEmpty) _entries = const [];
     notifyListeners();
     await refresh();
     return true;
@@ -306,7 +302,6 @@ class AppState extends ChangeNotifier {
     _cwd[section] =
         depth <= 0 ? base : _join(base, segs.take(depth).join('/'));
     _showCached(section, _cwd[section] ?? base);
-    if (_entries.isEmpty) _entries = const [];
     notifyListeners();
     await refresh();
   }
