@@ -50,6 +50,24 @@ class AppState extends ChangeNotifier {
   List<RemoteEntry> _entries = const [];
   List<RemoteEntry> get entries => _entries;
 
+  /// 目录缓存：key = "分区|路径"。
+  ///
+  /// 为什么要有它：以前每次切分区都会先把列表清空再发请求，
+  /// 电视上就是"按一下 → 画面空一下 → 一两秒后才有内容"，
+  /// 用户体感就是卡。现在切回来时先用上次的结果立刻画出来，
+  /// 再在后台悄悄刷新，没有变化的话用户完全无感。
+  final Map<String, List<RemoteEntry>> _cache = {};
+
+  String _cacheKey(Section s, String path) => '${s.name}|$path';
+
+  List<RemoteEntry>? _cached(Section s, String path) => _cache[_cacheKey(s, path)];
+
+  /// 立刻把缓存的内容显示出来（没有就不动）
+  void _showCached(Section s, String path) {
+    final hit = _cached(s, path);
+    if (hit != null) _entries = hit;
+  }
+
   bool loading = false;
   String? error;
   String status = '';
@@ -83,6 +101,7 @@ class AppState extends ChangeNotifier {
     await _source?.dispose();
     _source = null;
     _entries = const [];
+    _cache.clear();
     _base.clear();
     _cwd.clear();
     libraryRoot = '';
@@ -198,8 +217,10 @@ class AppState extends ChangeNotifier {
   Future<void> setSection(Section s) async {
     if (section == s && _entries.isNotEmpty) return;
     section = s;
-    _entries = const [];
     error = null;
+    // 先上缓存：切回"视频"时立刻看到上次的剧集列表，不用等网络
+    _showCached(s, cwdOf(s));
+    if (s.isMedia && _entries.isEmpty) _entries = const [];
     notifyListeners();
     if (s.isMedia) await refresh();
   }
@@ -208,21 +229,27 @@ class AppState extends ChangeNotifier {
     final src = _source;
     if (src == null || !section.isMedia) return;
 
+    final sec = section;
+    final path = cwd;
     loading = true;
     error = null;
     notifyListeners();
 
     try {
-      final all = await src.list(cwd);
-      final want = section.accept;
-      _entries = all
+      final all = await src.list(path);
+      final want = sec.accept;
+      final list = all
           .where((e) => e.isDir || e.kind == want)
           .toList(growable: false);
+      // 请求回来时用户可能已经切走了：只更新对应分区，别覆盖别人
+      _cache[_cacheKey(sec, path)] = list;
+      if (section == sec && cwd == path) _entries = list;
     } catch (e) {
-      _entries = const [];
-      error = _describeListError(e);
+      if (section == sec && cwd == path) {
+        if (_entries.isEmpty) error = _describeListError(e);
+      }
     }
-    loading = false;
+    if (section == sec && cwd == path) loading = false;
     notifyListeners();
   }
 
@@ -242,7 +269,8 @@ class AppState extends ChangeNotifier {
   /// 进入子目录
   Future<void> enter(String dirPath) async {
     _cwd[section] = dirPath;
-    _entries = const [];
+    _showCached(section, dirPath);
+    if (_entries.isEmpty) _entries = const [];
     notifyListeners();
     await refresh();
   }
@@ -263,7 +291,8 @@ class AppState extends ChangeNotifier {
     if (parent == cur) return false;
 
     _cwd[section] = parent;
-    _entries = const [];
+    _showCached(section, parent);
+    if (_entries.isEmpty) _entries = const [];
     notifyListeners();
     await refresh();
     return true;
@@ -276,7 +305,8 @@ class AppState extends ChangeNotifier {
     final segs = rel.split('/').where((e) => e.isNotEmpty).toList();
     _cwd[section] =
         depth <= 0 ? base : _join(base, segs.take(depth).join('/'));
-    _entries = const [];
+    _showCached(section, _cwd[section] ?? base);
+    if (_entries.isEmpty) _entries = const [];
     notifyListeners();
     await refresh();
   }

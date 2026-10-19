@@ -16,15 +16,17 @@ import 'keys.dart';
 /// 全屏播放器（视频 / 音乐共用）。
 ///
 /// 遥控器（没有面板时）：
+///   ↑ ↓  上一个 / 下一个视频（v1.6 改，原来是音量）
 ///   ← →  快退 / 快进 10 秒
-///   ↑ ↓  音量
 ///   OK   暂停 / 继续
-///   菜单  打开播放面板（目录列表 / 倍速 / 播放模式 / 跳过片头片尾）
+///   菜单  打开播放面板（目录列表 / 播放模式 / 倍速 / 音量 / 跳过片头片尾）
 ///   返回  退出
 ///
-/// v1.2 新增的四个功能都收在「播放面板」里，而不是摊在底部控制条上：
-///   底部条在 3 米外已经挤了 5 个按钮，再加 4 个必然按错。
-///   面板里用 ↑↓ 选、OK 执行、长按 OK 重置（跳过片头/片尾）。
+/// 播放面板里（v1.6）：
+///   播放速度一行：← → 减/加，OK 按 0.5→0.75→…→3→0.5 循环，
+///                 长按 OK 直接回 1×。
+///   跳过片头/片尾：**按目录生效**。在某个文件夹的某一集上设好，
+///                 这个文件夹里所有剧集都跳；换到别的文件夹不跳。
 ///
 /// 为什么自己画控制条，不用 media_kit 自带的：
 ///   自带的按钮是给小屏触屏设计的，3 米外看不清、遥控也对不上焦。
@@ -58,10 +60,18 @@ class _PlayerPageState extends State<PlayerPage> {
   bool _playing = false;
   bool _buffering = true;
   int _volume = 100;
-  Duration _pos = Duration.zero;
   Duration _dur = Duration.zero;
   String? _error;
   Timer? _hideTimer;
+
+  /// 播放进度单独放 ValueNotifier。
+  ///
+  /// 为什么不用 setState：位置流每秒推 10 次左右，setState 会把整页
+  /// （含 Video 原生纹理视图、顶部条、两个面板）全部重建一遍，
+  /// 在低端电视盒子上就是肉眼可见的卡顿。改成只让进度条和时间文字
+  /// 跟着值变，视频画面完全不参与重建。
+  final ValueNotifier<Duration> _posN = ValueNotifier(Duration.zero);
+  Duration get _pos => _posN.value;
 
   _Layer _layer = _Layer.none;
   int _menuIndex = 0;
@@ -75,14 +85,29 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 片尾只触发一次
   bool _endReached = false;
 
+  /// 每次打开新文件 +1，用来作废上一部片子还在跑的"跳片头"循环
+  int _openToken = 0;
+
+  /// 当前实际用的解码方式（面板里展示，方便判断卡是不是解码问题）
+  String _decoder = '…';
+
   RemoteEntry get _cur => widget.files[_index];
   bool get _isVideo => _cur.kind == MediaKind.video;
 
   AppState get app => widget.app;
   PlayMode get _mode => app.store.playMode;
-  int get _skipStart => app.store.skipStartSec;
-  int get _skipEnd => app.store.skipEndSec;
   double get _speed => app.store.speed;
+
+  /// 当前视频所在目录（远端相对路径，去掉文件名）。
+  /// 「跳过片头/片尾」按这个 key 存，所以只对本目录的剧集生效。
+  String get _dir {
+    final p = _cur.path;
+    final i = p.lastIndexOf('/');
+    return i <= 0 ? '' : p.substring(0, i);
+  }
+
+  int get _skipStart => app.store.skipStartOf(_dir);
+  int get _skipEnd => app.store.skipEndOf(_dir);
 
   @override
   void initState() {
@@ -99,7 +124,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
     _subs.add(_player.stream.position.listen((p) {
       if (!mounted) return;
-      setState(() => _pos = p);
+      _posN.value = p;
       _checkSkipEnd(p);
     }));
     _subs.add(_player.stream.duration.listen((d) {
@@ -130,6 +155,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _holdTimer?.cancel();
     _hideTimer?.cancel();
     _plScroll.dispose();
+    _posN.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -137,46 +163,129 @@ class _PlayerPageState extends State<PlayerPage> {
   // ------------------------------------------------------------- 播放
 
   Future<void> _open() async {
+    final token = ++_openToken;
     setState(() {
       _error = null;
-      _pos = Duration.zero;
       _dur = Duration.zero;
       _buffering = true;
       _endReached = false;
     });
+    _posN.value = Duration.zero;
     _plIndex = _index;
+
     try {
+      // 解码参数必须在 open 之前设，open 时才会被 mpv 采纳
+      await _applyDecodeOptions();
+
       final ref = app.ref(_cur.path);
       await _player.open(
         Media(ref.url, httpHeaders: ref.headers.isEmpty ? null : ref.headers),
       );
+      if (!mounted || token != _openToken) return;
       await _player.setVolume(_volume.toDouble());
       await _player.setRate(_speed);
-      await _applySkipStart();
+      unawaited(_maybeSkipIntro(token));
+      unawaited(_readDecoder(token));
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
   }
 
-  /// 跳过片头：等拿到时长之后再跳（open 刚返回时时长还是 0）
+  /// 设置 mpv 的解码 / 缓存参数。
   ///
-  /// 这里轮询 `player.state` 而不是订阅 duration 流：media_kit 的流是
-  /// 广播流，晚订阅时可能拿不到"当前值"，会一直等到超时。
-  Future<void> _applySkipStart() async {
-    final s = _skipStart;
-    if (s <= 0) return;
-    var d = _player.state.duration;
-    var tries = 0;
-    while (d <= Duration.zero && tries < 20) {
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      if (!mounted) return;
-      d = _player.state.duration;
-      tries++;
+  /// 全部走 dynamic + try/catch：media_kit 的 setProperty 在 Dart 侧是
+  /// 内部 API（版本一升就可能改名），这样写既不影响编译，真拿不到
+  /// 也只是"退化成默认值"，不会白屏。
+  Future<void> _applyDecodeOptions() async {
+    final wantHw = app.store.hwDecode;
+
+    // 网络播放的缓冲：默认值对高码率 1080p 太小，会反复 buffering
+    await _setProp('cache', 'yes');
+    await _setProp('cache-secs', '30');
+    await _setProp('demuxer-readahead-secs', '30');
+    await _setProp('demuxer-max-bytes', '128MiB');
+    await _setProp('demuxer-max-back-bytes', '32MiB');
+
+    if (!wantHw) {
+      await _setProp('hwdec', 'no');
+      _decoder = '软解（设置里可改回硬解）';
+      return;
     }
-    // 太短的片子（比片头还短）就别跳了，否则一打开就到尾
-    if (d.inSeconds > s + 5) {
-      await _player.seek(Duration(seconds: s));
-      if (mounted) setState(() => _pos = Duration(seconds: s));
+    // mediacodec-copy 在安卓盒子上兼容性最好：先解到内存再上屏，
+    // 不会出现某些 GPU 直接绿屏/黑屏的问题。失败再退 mediacodec。
+    for (final m in const ['mediacodec-copy', 'mediacodec', 'auto-safe']) {
+      if (await _setProp('hwdec', m)) {
+        _decoder = '硬解 $m（打开后自动确认）';
+        return;
+      }
+    }
+    _decoder = '软解（这台机器的解码器不认硬解参数）';
+  }
+
+  Future<bool> _setProp(String key, String value) async {
+    try {
+      // 用 dynamic 拿 platform：media_kit 的 setProperty 是内部 API，
+      // 直接写死类型的话，哪天升级把它挪走就编译不过了。
+      await ((_player as dynamic).platform as dynamic).setProperty(key, value);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 播放起来之后读一次 hwdec-current，把真实在用的解码方式显示出来
+  Future<void> _readDecoder(int token) async {
+    for (var i = 0; i < 20; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (!mounted || token != _openToken) return;
+      if (_player.state.position > Duration.zero) break;
+    }
+    try {
+      final cur = await ((_player as dynamic).platform as dynamic)
+          .getProperty('hwdec-current');
+      if (!mounted || token != _openToken) return;
+      final s = '$cur';
+      setState(() => _decoder = (s.isEmpty || s == 'no') ? '软解' : '硬解 $s');
+    } catch (_) {
+      // 读不到就算了，面板上保持"未知"
+    }
+  }
+
+  /// 跳过片头。
+  ///
+  /// v1.5 的写法有个致命问题：open() 刚返回就去看时长，这时 mpv 还没解出
+  /// 文件头，duration 一直是 0，循环 3 秒后就放弃了 —— 所以用户会觉得
+  /// "设置了没反应"。现在改成：等真正开始播（position > 0）之后再看时长，
+  /// 跳过去还会回读位置确认，没跳成功再试，最多 3 次。
+  Future<void> _maybeSkipIntro(int token) async {
+    final skip = _skipStart;
+    if (skip <= 0) return;
+
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (!mounted || token != _openToken) return;
+      if (_error != null) return;
+
+      final d = _player.state.duration;
+      final p = _player.state.position;
+
+      // 时长还没出来：继续等（最多 10 秒）
+      if (d <= Duration.zero) continue;
+
+      // 片子比片头还短，跳过就没了 —— 不跳
+      if (d.inSeconds <= skip + 5) return;
+
+      // 已经在片头之后了，不用跳
+      if (p.inSeconds + 1 >= skip) return;
+
+      await _player.seek(Duration(seconds: skip));
+      // 回读确认：跳成功就收工，没成功再试
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!mounted || token != _openToken) return;
+      if (_player.state.position.inSeconds + 2 >= skip) {
+        _posN.value = _player.state.position;
+        return;
+      }
     }
   }
 
@@ -212,10 +321,8 @@ class _PlayerPageState extends State<PlayerPage> {
       case PlayMode.repeatOne:
         _player.seek(Duration.zero);
         _player.play();
-        setState(() {
-          _endReached = false;
-          _pos = Duration.zero;
-        });
+        _posN.value = Duration.zero;
+        setState(() => _endReached = false);
         break;
       case PlayMode.shuffle:
         if (widget.files.length == 1) {
@@ -257,7 +364,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (target < Duration.zero) target = Duration.zero;
     if (_dur > Duration.zero && target > _dur) target = _dur;
     await _player.seek(target);
-    if (mounted) setState(() => _pos = target);
+    _posN.value = target;
   }
 
   Future<void> _seekToFraction(double f) async {
@@ -267,7 +374,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (v > 1) v = 1;
     final target = Duration(milliseconds: (v * _dur.inMilliseconds).round());
     await _player.seek(target);
-    if (mounted) setState(() => _pos = target);
+    _posN.value = target;
   }
 
   Future<void> _togglePlay() async {
@@ -296,6 +403,13 @@ class _PlayerPageState extends State<PlayerPage> {
     await _setSpeed(_speeds[n]);
   }
 
+  /// 单击循环：3× 之后回到 0.5×
+  Future<void> _speedCycle() async {
+    final i = _nearestSpeedIndex(_speed);
+    final n = (i + 1) % _speeds.length;
+    await _setSpeed(_speeds[n]);
+  }
+
   static int _nearestSpeedIndex(double v) {
     var best = 0;
     var diff = 999.0;
@@ -315,15 +429,16 @@ class _PlayerPageState extends State<PlayerPage> {
     if (mounted) setState(() {});
   }
 
-  /// 记住「片头」= 当前播放位置
+  /// 记住「片头」= 当前播放位置（只对当前目录生效）
   Future<void> _markSkipStart() async {
     if (_pos.inSeconds < 3) {
       _toast('现在才 0 秒，先往后拖一点再点「跳过片头」');
       return;
     }
-    await app.updateSetting(() => app.store.setSkipStartSec(_pos.inSeconds));
+    await app.updateSetting(
+        () => app.store.setSkipOf(_dir, start: _pos.inSeconds));
     if (mounted) setState(() {});
-    _toast('已记住片头：${fmtDuration(_pos)}（下个视频从这开始）');
+    _toast('已记住：这个文件夹的视频从 ${fmtDuration(_pos)} 开始播');
   }
 
   Future<void> _markSkipEnd() async {
@@ -340,21 +455,21 @@ class _PlayerPageState extends State<PlayerPage> {
       _toast('已经到结尾了，先把进度往前拖一点');
       return;
     }
-    await app.updateSetting(() => app.store.setSkipEndSec(remain));
+    await app.updateSetting(() => app.store.setSkipOf(_dir, end: remain));
     if (mounted) setState(() => _endReached = false);
-    _toast('已记住片尾：最后 ${fmtDuration(Duration(seconds: remain))} 自动跳过');
+    _toast('已记住：这个文件夹的视频最后 ${fmtDuration(Duration(seconds: remain))} 自动跳过');
   }
 
   Future<void> _resetSkipStart() async {
-    await app.updateSetting(() => app.store.setSkipStartSec(0));
+    await app.updateSetting(() => app.store.setSkipOf(_dir, start: 0));
     if (mounted) setState(() {});
-    _toast('已重置「跳过片头」');
+    _toast('已重置这个文件夹的「跳过片头」');
   }
 
   Future<void> _resetSkipEnd() async {
-    await app.updateSetting(() => app.store.setSkipEndSec(0));
+    await app.updateSetting(() => app.store.setSkipOf(_dir, end: 0));
     if (mounted) setState(() {});
-    _toast('已重置「跳过片尾」');
+    _toast('已重置这个文件夹的「跳过片尾」');
   }
 
   void _toast(String msg) {
@@ -370,6 +485,8 @@ class _PlayerPageState extends State<PlayerPage> {
 
   void _scheduleHide() {
     _hideTimer?.cancel();
+    // 面板开着的时候不要自动隐藏控制条（否则调音量会把界面调没）
+    if (_layer != _Layer.none) return;
     if (!_ui) return;
     _hideTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) setState(() => _ui = false);
@@ -413,7 +530,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ------------------------------------------------------------- 按键
 
-  static const int _menuRows = 6;
+  static const int _menuRows = 7; // 0列表 1模式 2倍速 3音量 4片头 5片尾 6关闭
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (_layer == _Layer.none) return _onPlayerKey(e);
@@ -433,12 +550,21 @@ class _PlayerPageState extends State<PlayerPage> {
       _seekBy(10);
       return KeyEventResult.handled;
     }
+    // v1.6：上下键改成切上一个/下一个视频（音量挪进播放面板）
     if (isUp(e)) {
-      _volumeBy(5);
+      if (_index > 0) {
+        _prev();
+      } else {
+        _toast('已经是第一个了');
+      }
       return KeyEventResult.handled;
     }
     if (isDown(e)) {
-      _volumeBy(-5);
+      if (_index + 1 < widget.files.length) {
+        _next();
+      } else {
+        _toast('已经是最后一个了');
+      }
       return KeyEventResult.handled;
     }
     if (isSelect(e) || isPlayPause(e)) {
@@ -453,19 +579,22 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   KeyEventResult _onMenuKey(KeyEvent e) {
-    // 长按 OK：片头/片尾两行是"重置"，其余行等同于短按
+    // 长按 OK：
+    //   倍速行 = 回 1×
+    //   片头/片尾行 = 重置
+    // 其余行短按即可
     if (isSelect(e)) {
-      final isSkipRow = _menuIndex == 3 || _menuIndex == 4;
-      if (e is KeyDownEvent && isSkipRow) {
+      final isHoldRow = _menuIndex == 2 || _menuIndex == 4 || _menuIndex == 5;
+      if (e is KeyDownEvent && isHoldRow) {
         _holdFired = false;
         _holdTimer?.cancel();
-        _holdTimer = Timer(const Duration(milliseconds: 650), () {
+        _holdTimer = Timer(const Duration(milliseconds: 600), () {
           _holdFired = true;
           _activateRow(long: true);
         });
         return KeyEventResult.handled;
       }
-      if (e is KeyUpEvent && isSkipRow) {
+      if (e is KeyUpEvent && isHoldRow) {
         _holdTimer?.cancel();
         if (!_holdFired) _activateRow(long: false);
         _holdFired = false;
@@ -482,8 +611,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
 
     if (isUp(e)) {
-      final n = _menuRows;
-      setState(() => _menuIndex = (_menuIndex - 1 + n) % n);
+      setState(() => _menuIndex = (_menuIndex - 1 + _menuRows) % _menuRows);
       return KeyEventResult.handled;
     }
     if (isDown(e)) {
@@ -493,11 +621,13 @@ class _PlayerPageState extends State<PlayerPage> {
     if (isLeft(e)) {
       if (_menuIndex == 1) _modeStep(-1);
       if (_menuIndex == 2) _speedStep(-1);
+      if (_menuIndex == 3) _volumeBy(-5);
       return KeyEventResult.handled;
     }
     if (isRight(e)) {
       if (_menuIndex == 1) _modeStep(1);
       if (_menuIndex == 2) _speedStep(1);
+      if (_menuIndex == 3) _volumeBy(5);
       return KeyEventResult.handled;
     }
     if (isMenu(e)) {
@@ -546,23 +676,31 @@ class _PlayerPageState extends State<PlayerPage> {
         _modeStep(1);
         break;
       case 2:
-        _speedStep(1);
+        if (long) {
+          _setSpeed(1);
+          _toast('已回到 1×');
+        } else {
+          _speedCycle();
+        }
         break;
       case 3:
+        _volumeBy(5);
+        break;
+      case 4:
         if (long) {
           _resetSkipStart();
         } else {
           _markSkipStart();
         }
         break;
-      case 4:
+      case 5:
         if (long) {
           _resetSkipEnd();
         } else {
           _markSkipEnd();
         }
         break;
-      case 5:
+      case 6:
         _closeLayer();
         break;
     }
@@ -613,8 +751,8 @@ class _PlayerPageState extends State<PlayerPage> {
                     child: Icon(Icons.play_circle_fill,
                         size: 88, color: Colors.white24),
                   ),
-                _topBar(),
-                _bottomBar(),
+                if (_ui) _topBar(),
+                if (_ui) _bottomBar(),
                 if (_layer == _Layer.playlist) _playlistLayer(),
                 if (_layer == _Layer.menu) _menuLayer(),
               ],
@@ -683,7 +821,9 @@ class _PlayerPageState extends State<PlayerPage> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  '常见原因：格式不被支持 / 服务器不支持 Range / 网络断了',
+                  '常见原因：格式不被支持 / 服务器不支持 Range / 网络断了\n'
+                  '可以试试「设置 → 视频硬解」关掉再放一次',
+                  textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: TvColors.textDim),
                 ),
               ],
@@ -692,9 +832,8 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       );
 
-  Widget _topBar() => AnimatedPositioned(
-        duration: const Duration(milliseconds: 180),
-        top: _ui ? 0 : -110,
+  Widget _topBar() => Positioned(
+        top: 0,
         left: 0,
         right: 0,
         child: Builder(builder: (context) {
@@ -753,14 +892,6 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Widget _bottomBar() {
     final compact = isCompact(context);
-    final timeText = <Widget>[
-      Text(fmtDuration(_pos),
-          style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
-      const Text(' / ',
-          style: TextStyle(fontSize: 13, color: TvColors.textDim)),
-      Text(fmtDuration(_dur),
-          style: const TextStyle(fontSize: 13, color: TvColors.textDim)),
-    ];
 
     final transport = <Widget>[
       _CtlBtn(
@@ -786,9 +917,8 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
     ];
 
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 180),
-      bottom: _ui ? 0 : -210,
+    return Positioned(
+      bottom: 0,
       left: 0,
       right: 0,
       child: Container(
@@ -804,18 +934,27 @@ class _PlayerPageState extends State<PlayerPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _ProgressBar(
-              pos: _pos,
-              dur: _dur,
-              onSeek: _seekToFraction,
+            // 只有这一块跟着进度值重画，视频画面不参与
+            ValueListenableBuilder<Duration>(
+              valueListenable: _posN,
+              builder: (context, pos, _) => _ProgressBar(
+                pos: pos,
+                dur: _dur,
+                onSeek: _seekToFraction,
+              ),
             ),
             const SizedBox(height: 6),
             if (compact) ...[
-              // 手机上一行排不下 7 个按钮（一定溢出，就是我们看到的"显示不全"），
-              // 拆成"时间 + 小按钮"和"播放控制"两行。
               Row(
                 children: [
-                  ...timeText,
+                  ValueListenableBuilder<Duration>(
+                    valueListenable: _posN,
+                    builder: (context, pos, _) => Text(
+                      '${fmtDuration(pos)} / ${fmtDuration(_dur)}',
+                      style: const TextStyle(
+                          fontSize: 12.5, color: TvColors.textDim),
+                    ),
+                  ),
                   const Spacer(),
                   _CtlBtn(
                     icon: Icons.format_list_bulleted_rounded,
@@ -839,7 +978,14 @@ class _PlayerPageState extends State<PlayerPage> {
             ] else
               Row(
                 children: [
-                  ...timeText,
+                  ValueListenableBuilder<Duration>(
+                    valueListenable: _posN,
+                    builder: (context, pos, _) => Text(
+                      '${fmtDuration(pos)} / ${fmtDuration(_dur)}',
+                      style: const TextStyle(
+                          fontSize: 13, color: TvColors.textDim),
+                    ),
+                  ),
                   const SizedBox(width: 18),
                   _CtlBtn(
                     icon: Icons.format_list_bulleted_rounded,
@@ -888,16 +1034,24 @@ class _PlayerPageState extends State<PlayerPage> {
         icon: Icons.speed_rounded,
         title: '播放速度',
         value: _fmtSpeed(_speed),
-        hint: '← → 调整',
+        hint: '← → 微调 · OK 循环 · 长按回 1×',
         focused: _menuIndex == 2,
-        onTap: () => _speedStep(1),
+        onTap: _speedCycle,
+      ),
+      _MenuRow(
+        icon: Icons.volume_up_rounded,
+        title: '音量',
+        value: '$_volume%',
+        hint: '← → 调整（上下键已改为切换视频）',
+        focused: _menuIndex == 3,
+        onTap: () => _volumeBy(5),
       ),
       _MenuRow(
         icon: Icons.first_page_rounded,
         title: '跳过片头',
         value: _skipStart > 0 ? fmtDuration(Duration(seconds: _skipStart)) : '关闭',
-        hint: 'OK 记住当前 · 长按重置',
-        focused: _menuIndex == 3,
+        hint: '只对本文件夹生效 · OK 记住当前 · 长按重置',
+        focused: _menuIndex == 4,
         onTap: _markSkipStart,
         onLongPress: _resetSkipStart,
       ),
@@ -905,8 +1059,8 @@ class _PlayerPageState extends State<PlayerPage> {
         icon: Icons.last_page_rounded,
         title: '跳过片尾',
         value: _skipEnd > 0 ? '最后 ${_skipEnd}s' : '关闭',
-        hint: 'OK 记住当前剩余 · 长按重置',
-        focused: _menuIndex == 4,
+        hint: '只对本文件夹生效 · OK 记住剩余 · 长按重置',
+        focused: _menuIndex == 5,
         onTap: _markSkipEnd,
         onLongPress: _resetSkipEnd,
       ),
@@ -914,7 +1068,8 @@ class _PlayerPageState extends State<PlayerPage> {
         icon: Icons.close_rounded,
         title: '关闭面板',
         value: '',
-        focused: _menuIndex == 5,
+        hint: '解码：$_decoder',
+        focused: _menuIndex == 6,
         onTap: _closeLayer,
       ),
     ];
@@ -925,7 +1080,7 @@ class _PlayerPageState extends State<PlayerPage> {
       top: 0,
       bottom: 0,
       child: Container(
-        width: compact ? MediaQuery.sizeOf(context).width : 460,
+        width: compact ? MediaQuery.sizeOf(context).width : 480,
         padding: EdgeInsets.fromLTRB(
             compact ? 12 : 22, compact ? 60 : 90, compact ? 12 : 22, 16),
         decoration: BoxDecoration(
@@ -941,7 +1096,7 @@ class _PlayerPageState extends State<PlayerPage> {
             const Text('播放设置',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            const Text('↑↓ 选择 · OK 执行 · 菜单/返回 关闭',
+            const Text('↑↓ 选择 · OK 执行 · ← → 调值 · 菜单/返回 关闭',
                 style: TextStyle(fontSize: 12.5, color: TvColors.textDim)),
             const SizedBox(height: 16),
             Expanded(
@@ -1075,8 +1230,7 @@ class _MenuRow extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
         onLongPress: onLongPress,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+        child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: focused ? TvColors.cardActive : Colors.transparent,

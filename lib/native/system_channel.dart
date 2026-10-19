@@ -269,18 +269,24 @@ class SystemChannel {
 
   // ------------------------------------------------------------ v1.5 新增
 
-  /// 打开系统设置首页
-  static Future<bool> openSystemSettings() async {
-    if (!_isAndroid) return false;
+  /// 打开系统设置首页。
+  ///
+  /// 返回命中的入口描述（空字符串 = 所有入口都没命中，已退到本应用详情页）。
+  /// 不同电视的"设置"入口完全不一样，原生侧是一层层兜底试出来的，
+  /// 把命中方式带回来，界面才能告诉用户"到底怎么打开的"。
+  static Future<String> openSystemSettings() async {
+    if (!_isAndroid) return '';
     try {
-      return await _ch.invokeMethod<bool>('openSystemSettings') ?? false;
+      return await _ch.invokeMethod<String>('openSystemSettings') ?? '';
     } catch (e) {
       debugPrint('打开系统设置失败：$e');
-      return false;
+      return '';
     }
   }
 
-  /// 打开信号源切换界面。返回命中的 action（空 = 只打开了系统设置兜底）
+  /// 打开信号源切换界面。
+  /// 返回："input:xxx" = 真进了信号源界面；"settings" = 只打开了系统设置；
+  ///      空字符串 = 什么都没打开。
   static Future<String> openInputSource() async {
     if (!_isAndroid) return '';
     try {

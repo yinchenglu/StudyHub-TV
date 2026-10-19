@@ -174,11 +174,9 @@ class _AutostartPageState extends State<AutostartPage> {
     final top = next * rowH;
     final vp = _scroll.position.viewportDimension;
     if (top < _scroll.offset) {
-      _scroll.animateTo(top,
-          duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+      _scroll.jumpTo(top);
     } else if (top + rowH > _scroll.offset + vp) {
-      _scroll.animateTo(top + rowH - vp,
-          duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+      _scroll.jumpTo(top + rowH - vp);
     }
   }
 

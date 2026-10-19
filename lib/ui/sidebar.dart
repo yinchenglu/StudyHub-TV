@@ -73,11 +73,9 @@ class _SidebarState extends State<Sidebar> {
       final vp = _scroll.position.viewportDimension;
       final cur = _scroll.offset;
       if (top < cur) {
-        _scroll.animateTo(top,
-            duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+        _scroll.jumpTo(top);
       } else if (top + _slot > cur + vp) {
-        _scroll.animateTo(top + _slot - vp,
-            duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+        _scroll.jumpTo(top + _slot - vp);
       }
     });
   }

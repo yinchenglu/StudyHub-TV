@@ -108,11 +108,9 @@ class _TvListPanelState extends State<TvListPanel> {
     final top = next * _rowH;
     final viewport = _scroll.position.viewportDimension;
     if (top < _scroll.offset) {
-      _scroll.animateTo(top,
-          duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+      _scroll.jumpTo(top);
     } else if (top + _rowH > _scroll.offset + viewport) {
-      _scroll.animateTo(top + _rowH - viewport,
-          duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+      _scroll.jumpTo(top + _rowH - viewport);
     }
   }
 

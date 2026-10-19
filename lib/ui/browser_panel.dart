@@ -121,10 +121,9 @@ class _BrowserPanelState extends State<BrowserPanel> {
     final viewport = _scroll.position.viewportDimension;
     final bottom = top + _extent + _gap * 2;
     if (top < _scroll.offset) {
-      _scroll.animateTo(top, duration: const Duration(milliseconds: 160), curve: Curves.easeOut);
+      _scroll.jumpTo(top);
     } else if (bottom > _scroll.offset + viewport) {
-      _scroll.animateTo(bottom - viewport,
-          duration: const Duration(milliseconds: 160), curve: Curves.easeOut);
+      _scroll.jumpTo(bottom - viewport);
     }
   }
 

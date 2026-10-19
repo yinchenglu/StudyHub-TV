@@ -113,23 +113,75 @@ class _ToolsPanelState extends State<ToolsPanel> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
+  /// 打开系统设置。v1.6 起原生侧会返回"到底从哪个入口进去的"，
+  /// 一个都没进去时弹窗说明（以前只弹一句"打不开"，等于死路）。
   Future<void> _openSystemSettings() async {
-    final ok = await SystemChannel.openSystemSettings();
-    _toast(ok ? '已打开系统设置，按返回键回到这里' : '打不开系统设置（系统限制）');
+    final hit = await SystemChannel.openSystemSettings();
+    if (!mounted) return;
+    if (hit.isEmpty) {
+      await _explain(
+        title: '没能直接打开系统设置',
+        body: '这台电视的「设置」不接受标准的系统调用（国产 ROM 常见），'
+            '已经帮你打开了本应用的详情页。\n\n'
+            '可以这样进设置：\n'
+            '1. 回到电视桌面，找齿轮图标的「设置」；\n'
+            '2. 有的机型在遥控器上有单独的「设置」键。',
+      );
+      return;
+    }
+    _toast('已打开系统设置（$hit），按返回键回到这里');
   }
 
+  /// 打开信号源切换。
   Future<void> _openInputSource() async {
     final inputs = await SystemChannel.tvInputs();
     if (!mounted) return;
     final hit = await SystemChannel.openInputSource();
     if (!mounted) return;
-    if (hit.isNotEmpty) {
+
+    if (hit.startsWith('input:')) {
       _toast('已打开信号源界面');
-    } else if (inputs.isEmpty) {
-      _toast('这台设备没有信号源（手机/平板没有 HDMI 输入），已打开系统设置');
-    } else {
-      _toast('没找到信号源界面，已打开系统设置，可在里面找「信号源」');
+      return;
     }
+    if (hit == 'settings') {
+      await _explain(
+        title: '没找到独立的信号源界面',
+        body: '这台设备没有提供"信号源切换"的独立入口，已经打开系统设置，'
+            '在里面找「信号源 / 输入源 / HDMI」那一项。\n\n'
+            '也可以直接按遥控器上的「信号源 / TV / INPUT」键。',
+      );
+      return;
+    }
+    await _explain(
+      title: '这台设备可能没有信号源',
+      body: inputs.isEmpty
+          ? '系统里没有登记任何电视输入（手机、平板和普通盒子都没有 HDMI 输入），'
+              '所以没有可切换的信号源。\n\n如果你确实在电视上看到这个按钮，'
+              '请用遥控器上的「信号源 / TV / INPUT」键。'
+          : '系统里登记了 ${inputs.length} 个信号源：\n'
+              '${inputs.map((e) => '· ${e.label}').join('\n')}\n\n'
+              '但没找到可以跳转的切换界面，请用遥控器上的「信号源 / TV / INPUT」键。',
+    );
+  }
+
+  Future<void> _explain({required String title, required String body}) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TvColors.panel,
+        title: Text(title),
+        content: Text(body,
+            style: const TextStyle(fontSize: 13.5, height: 1.7)),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _toast(String msg) {

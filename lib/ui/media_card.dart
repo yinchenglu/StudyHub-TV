@@ -118,7 +118,9 @@ class MediaCard extends StatelessWidget {
           fit: BoxFit.cover,
           memCacheWidth: thumbWidth,
           maxWidthDiskCache: thumbWidth * 2,
-          fadeInDuration: const Duration(milliseconds: 150),
+          // 不做淡入：低端盒子上 12 张卡片同时补间会掉帧，
+          // 而且电视用户根本注意不到 150ms 的渐显，只感觉到"慢"
+          fadeInDuration: Duration.zero,
           placeholder: (_, __) => Container(color: TvColors.card),
           errorWidget: (_, __, ___) => _placeholder(Icons.broken_image_outlined),
         );

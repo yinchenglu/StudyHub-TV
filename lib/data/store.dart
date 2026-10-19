@@ -30,8 +30,8 @@ class Store {
   static const _kSlideshow = 'slideshow_sec';
   static const _kPlayMode = 'play_mode';
   static const _kSpeed = 'play_speed';
-  static const _kSkipStart = 'skip_start_sec';
-  static const _kSkipEnd = 'skip_end_sec';
+  static const _kSkipMap = 'skip_by_dir_v1';
+  static const _kHwDecode = 'hw_decode';
   static const _kDownloadDir = 'download_dir';
   static const _kPwdPrefix = 'pwd_';
 
@@ -192,13 +192,89 @@ class Store {
 
   Future<void> setSpeed(double v) async => _p!.setDouble(_kSpeed, v);
 
-  /// 跳过片头：每个视频开头自动跳过多少秒（0 = 关闭）
-  int get skipStartSec => _p!.getInt(_kSkipStart) ?? 0;
-  Future<void> setSkipStartSec(int v) async => _p!.setInt(_kSkipStart, v < 0 ? 0 : v);
+  // ------------------------------------------------------------- 跳过片头片尾
+  //
+  // v1.6 改成**按目录**记：同一个文件夹里的剧集共用一套片头片尾，
+  // 换个目录（另一部剧 / 另一季）就不该沿用。所以键是"目录的相对路径"。
+  //
+  // 存成一个 JSON map 而不是给每个目录开一个键：
+  //   SharedPreferences 的键一多，初始化时全量读进内存很浪费；
+  //   这里条目最多几十个，一个字符串最省事。
+  //   {"StudyHub-TV/video/某剧": {"s": 95, "e": 120}, ...}
 
-  /// 跳过片尾：离结束还有多少秒就自动下一个（0 = 关闭）
-  int get skipEndSec => _p!.getInt(_kSkipEnd) ?? 0;
-  Future<void> setSkipEndSec(int v) async => _p!.setInt(_kSkipEnd, v < 0 ? 0 : v);
+  Map<String, Map<String, int>> _skipCache = {};
+  bool _skipLoaded = false;
+
+  Map<String, Map<String, int>> get _skipMap {
+    if (!_skipLoaded) {
+      _skipLoaded = true;
+      final raw = _p!.getString(_kSkipMap);
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final m = jsonDecode(raw);
+          if (m is Map) {
+            final out = <String, Map<String, int>>{};
+            m.forEach((k, v) {
+              if (v is Map) {
+                out['$k'] = {
+                  's': (v['s'] as num?)?.toInt() ?? 0,
+                  'e': (v['e'] as num?)?.toInt() ?? 0,
+                };
+              }
+            });
+            _skipCache = out;
+          }
+        } catch (e) {
+          debugPrint('跳过片头片尾记录解析失败：$e');
+        }
+      }
+    }
+    return _skipCache;
+  }
+
+  Future<void> _flushSkip() async =>
+      _p!.setString(_kSkipMap, jsonEncode(_skipMap));
+
+  /// 某个目录的「跳过片头」秒数（0 = 没设）
+  int skipStartOf(String dir) {
+    final v = _skipMap[dir];
+    final s = v?['s'] ?? 0;
+    return s < 0 ? 0 : s;
+  }
+
+  /// 某个目录的「跳过片尾」秒数（0 = 没设）
+  int skipEndOf(String dir) {
+    final v = _skipMap[dir];
+    final e = v?['e'] ?? 0;
+    return e < 0 ? 0 : e;
+  }
+
+  Future<void> setSkipOf(String dir, {int? start, int? end}) async {
+    if (dir.isEmpty) return;
+    final cur = Map<String, int>.from(_skipMap[dir] ?? const {});
+    if (start != null) cur['s'] = start < 0 ? 0 : start;
+    if (end != null) cur['e'] = end < 0 ? 0 : end;
+    if ((cur['s'] ?? 0) <= 0 && (cur['e'] ?? 0) <= 0) {
+      _skipMap.remove(dir);
+    } else {
+      _skipMap[dir] = cur;
+    }
+    await _flushSkip();
+  }
+
+  /// 有设置了跳过片头/片尾的目录数（设置页展示用）
+  int get skipDirCount => _skipMap.length;
+
+  Future<void> clearAllSkip() async {
+    _skipMap.clear();
+    await _flushSkip();
+  }
+
+  // ------------------------------------------------------------- 播放器其它
+
+  /// 视频硬解：true = 交给电视自带的解码器（省电、不卡），false = 软解（兼容性最好）
+  bool get hwDecode => _p!.getBool(_kHwDecode) ?? true;
+  Future<void> setHwDecode(bool v) async => _p!.setBool(_kHwDecode, v);
 
   // ------------------------------------------------------------- 下载位置
 

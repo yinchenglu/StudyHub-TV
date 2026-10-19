@@ -11,12 +11,32 @@ import '../state/app_state.dart';
 import 'keys.dart';
 import 'tv_widgets.dart';
 
-/// 「工具 → 文件管理」（v1.5 重写：从"只能看和装"升级成真文件管理器）。
+/// 一个条目（列目录时顺手把大小算好，避免每次重建都做一次同步 IO）
+class _Node {
+  _Node({
+    required this.path,
+    required this.name,
+    required this.isDir,
+    required this.size,
+  });
+
+  final String path;
+  final String name;
+  final bool isDir;
+  final int size;
+
+  FileSystemEntity get entity => isDir ? Directory(path) : File(path);
+}
+
+/// 「工具 → 文件管理」。
 ///
 /// 能干什么：
 ///   浏览整台电视的存储（不是只有 App 自己的目录）、进/退目录、
 ///   打开文件、复制 / 剪切 / 粘贴、重命名、删除、压缩成 zip、解压 zip、
 ///   新建文件夹、上传到服务器的 download 目录。
+///
+/// v1.6 把列表改成**平铺网格**（用户要求）：电视上横向空间多、纵向少，
+/// 一屏能看 20+ 个条目比只能看 8 行强得多；遥控器二维移动也更顺手。
 ///
 /// 为什么先问一次"所有文件访问"：
 ///   安卓 11（API 30）起，普通应用只能读写自己的目录和公共媒体目录。
@@ -39,9 +59,11 @@ class _FileManagerPageState extends State<FileManagerPage> {
 
   String _cwd = '';
   String _root = '';
-  List<FileSystemEntity> _items = const [];
+  List<_Node> _items = const [];
   bool _loading = true;
   int _index = 0;
+  int _cols = 4;
+  double _tileH = 120;
   String _status = '';
 
   StorageInfo? _storage;
@@ -124,23 +146,33 @@ class _FileManagerPageState extends State<FileManagerPage> {
       _loading = true;
       _index = 0;
     });
-    final out = <FileSystemEntity>[];
+    final out = <_Node>[];
     String? err;
     try {
       final dir = Directory(_cwd);
       await for (final e in dir.list(followLinks: false)) {
-        out.add(e);
+        final isDir = e is Directory;
+        var size = 0;
+        if (!isDir) {
+          try {
+            size = await (e as File).length();
+          } catch (_) {
+            size = 0;
+          }
+        }
+        out.add(_Node(
+          path: e.path,
+          name: _baseName(e.path),
+          isDir: isDir,
+          size: size,
+        ));
       }
     } catch (e) {
       err = '$e';
     }
     out.sort((a, b) {
-      final ad = a is Directory;
-      final bd = b is Directory;
-      if (ad != bd) return ad ? -1 : 1;
-      return _baseName(a.path)
-          .toLowerCase()
-          .compareTo(_baseName(b.path).toLowerCase());
+      if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
     if (!mounted) return;
     setState(() {
@@ -150,6 +182,8 @@ class _FileManagerPageState extends State<FileManagerPage> {
         final needAll = _storage != null && !_storage!.allFiles;
         _status = '这个目录读不了：$_cwd\n'
             '${needAll ? '安卓 11 以上要先去系统里开「所有文件访问」，点右上角那个按钮。' : '可能没有权限，或者目录不存在。'}';
+      } else {
+        _status = '';
       }
     });
   }
@@ -169,28 +203,26 @@ class _FileManagerPageState extends State<FileManagerPage> {
 
   // ------------------------------------------------------------- 动作
 
-  Future<void> _open(FileSystemEntity e) async {
-    if (e is Directory) {
-      await _enter(e.path);
+  Future<void> _open(_Node n) async {
+    if (n.isDir) {
+      await _enter(n.path);
       return;
     }
-    final ok = await SystemChannel.openFile(e.path);
+    final ok = await SystemChannel.openFile(n.path);
     if (!mounted) return;
     setState(() => _status = ok
-        ? '已用系统应用打开：${_baseName(e.path)}'
-        : '打不开「${_baseName(e.path)}」：系统没有能处理这种文件的程序');
+        ? '已用系统应用打开：${n.name}'
+        : '打不开「${n.name}」：系统没有能处理这种文件的程序');
   }
 
-  Future<void> _actions(FileSystemEntity e) async {
-    final name = _baseName(e.path);
-    final isDir = e is Directory;
-    final isZip = !isDir && name.toLowerCase().endsWith('.zip');
+  Future<void> _actions(_Node n) async {
+    final isZip = !n.isDir && n.name.toLowerCase().endsWith('.zip');
 
     final pick = await showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
         backgroundColor: TvColors.panel,
-        title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
+        title: Text(n.name, maxLines: 2, overflow: TextOverflow.ellipsis),
         children: [
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'open'),
@@ -217,10 +249,11 @@ class _FileManagerPageState extends State<FileManagerPage> {
               onPressed: () => Navigator.pop(ctx, 'unzip'),
               child: const _Opt(Icons.unarchive_outlined, '解压到当前目录'),
             ),
-          if (!isDir)
+          if (!n.isDir)
             SimpleDialogOption(
               onPressed: () => Navigator.pop(ctx, 'upload'),
-              child: const _Opt(Icons.cloud_upload_outlined, '上传到服务器 download'),
+              child:
+                  const _Opt(Icons.cloud_upload_outlined, '上传到服务器 download'),
             ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'props'),
@@ -241,39 +274,39 @@ class _FileManagerPageState extends State<FileManagerPage> {
 
     switch (pick) {
       case 'open':
-        await _open(e);
+        await _open(n);
         break;
       case 'copy':
         setState(() {
-          _clip = [e.path];
+          _clip = [n.path];
           _clipCut = false;
-          _status = '已复制「$name」，进到目标目录按「粘贴」';
+          _status = '已复制「${n.name}」，进到目标目录按「粘贴」';
         });
         break;
       case 'cut':
         setState(() {
-          _clip = [e.path];
+          _clip = [n.path];
           _clipCut = true;
-          _status = '已剪切「$name」，进到目标目录按「粘贴」（原文件那时才消失）';
+          _status = '已剪切「${n.name}」，进到目标目录按「粘贴」（原文件那时才消失）';
         });
         break;
       case 'rename':
-        await _rename(e);
+        await _rename(n);
         break;
       case 'zip':
-        await _zip(e);
+        await _zip(n);
         break;
       case 'unzip':
-        await _unzip(File(e.path));
+        await _unzip(File(n.path));
         break;
       case 'upload':
-        await _upload(File(e.path));
+        await _upload(File(n.path));
         break;
       case 'props':
-        await _props(e);
+        await _props(n);
         break;
       case 'delete':
-        await _delete(e);
+        await _delete(n);
         break;
     }
     _node.requestFocus();
@@ -333,8 +366,8 @@ class _FileManagerPageState extends State<FileManagerPage> {
     }
   }
 
-  Future<void> _rename(FileSystemEntity e) async {
-    final old = _baseName(e.path);
+  Future<void> _rename(_Node n) async {
+    final old = n.name;
     final ctrl = TextEditingController(text: old);
     final name = await showDialog<String>(
       context: context,
@@ -358,10 +391,10 @@ class _FileManagerPageState extends State<FileManagerPage> {
         setState(() => _status = '改名失败：已经有个叫「$name」的了');
         return;
       }
-      if (e is Directory) {
-        await e.rename(target);
-      } else if (e is File) {
-        await e.rename(target);
+      if (n.isDir) {
+        await Directory(n.path).rename(target);
+      } else {
+        await File(n.path).rename(target);
       }
       if (!mounted) return;
       setState(() => _status = '已改名为「$name」');
@@ -372,15 +405,14 @@ class _FileManagerPageState extends State<FileManagerPage> {
     }
   }
 
-  Future<void> _delete(FileSystemEntity e) async {
-    final name = _baseName(e.path);
+  Future<void> _delete(_Node n) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: TvColors.panel,
-        title: Text('删除「$name」？'),
+        title: Text('删除「${n.name}」？'),
         content: Text(
-          e is Directory ? '整个文件夹连同里面的东西都会删掉，删了就找不回来。' : '删了就找不回来。',
+          n.isDir ? '整个文件夹连同里面的东西都会删掉，删了就找不回来。' : '删了就找不回来。',
           style: const TextStyle(fontSize: 14, height: 1.6),
         ),
         actions: [
@@ -396,9 +428,9 @@ class _FileManagerPageState extends State<FileManagerPage> {
     );
     if (ok != true) return;
     try {
-      await e.delete(recursive: true);
+      await n.entity.delete(recursive: true);
       if (!mounted) return;
-      setState(() => _status = '已删除「$name」');
+      setState(() => _status = '已删除「${n.name}」');
       await _list();
     } catch (err) {
       if (!mounted) return;
@@ -406,14 +438,14 @@ class _FileManagerPageState extends State<FileManagerPage> {
     }
   }
 
-  Future<void> _zip(FileSystemEntity e) async {
-    final name = _baseName(e.path);
-    final out = _join(_cwd, '$name.zip');
-    setState(() => _status = '正在压缩「$name」…');
-    final n = await SystemChannel.zip([e.path], out);
+  Future<void> _zip(_Node n) async {
+    final out = _join(_cwd, '${n.name}.zip');
+    setState(() => _status = '正在压缩「${n.name}」…');
+    final count = await SystemChannel.zip([n.path], out);
     if (!mounted) return;
-    setState(() => _status =
-        n < 0 ? '压缩失败（文件太多或没有权限）' : '已压缩：$name.zip（$n 个文件）');
+    setState(() => _status = count < 0
+        ? '压缩失败（文件太多或没有权限）'
+        : '已压缩：${n.name}.zip（$count 个文件）');
     await _list();
   }
 
@@ -424,10 +456,11 @@ class _FileManagerPageState extends State<FileManagerPage> {
         : name;
     final dir = _join(_cwd, stem);
     setState(() => _status = '正在解压「$name」…');
-    final n = await SystemChannel.unzip(zip.path, dir);
+    final count = await SystemChannel.unzip(zip.path, dir);
     if (!mounted) return;
-    setState(() => _status =
-        n < 0 ? '解压失败：压缩包可能损坏或者不是 zip' : '已解压 $n 个文件到「$stem」');
+    setState(() => _status = count < 0
+        ? '解压失败：压缩包可能损坏或者不是 zip'
+        : '已解压 $count 个文件到「$stem」');
     await _list();
   }
 
@@ -448,16 +481,13 @@ class _FileManagerPageState extends State<FileManagerPage> {
     }
   }
 
-  Future<void> _props(FileSystemEntity e) async {
-    final name = _baseName(e.path);
-    int size = 0;
+  Future<void> _props(_Node n) async {
     var remark = '';
     var mtime = '';
     try {
-      final st = await e.stat();
-      size = st.size;
+      final st = await n.entity.stat();
       mtime = st.modified.toString().split('.').first;
-      if (e is Directory) {
+      if (n.isDir) {
         remark = '文件夹（大小只是目录项本身，不是里面所有文件之和）';
       }
     } catch (_) {}
@@ -466,11 +496,11 @@ class _FileManagerPageState extends State<FileManagerPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: TvColors.panel,
-        title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
+        title: Text(n.name, maxLines: 2, overflow: TextOverflow.ellipsis),
         content: SelectableText(
-          '路径：${e.path}\n'
-          '类型：${e is Directory ? '文件夹' : '文件'}\n'
-          '大小：${fmtBytes(size)}\n'
+          '路径：${n.path}\n'
+          '类型：${n.isDir ? '文件夹' : '文件'}\n'
+          '大小：${fmtBytes(n.size)}\n'
           '修改时间：$mtime\n'
           '${remark.isEmpty ? '' : '\n$remark'}',
           style: const TextStyle(fontSize: 13.5, height: 1.7),
@@ -531,23 +561,33 @@ class _FileManagerPageState extends State<FileManagerPage> {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final n = _items.length;
 
+    // 平铺网格：上下按行跳，左右按格跳
     if (isUp(e)) {
-      _move(_index - 1);
+      _move(_index - _cols);
       return KeyEventResult.handled;
     }
     if (isDown(e)) {
-      _move(_index + 1);
+      _move(_index + _cols);
       return KeyEventResult.handled;
     }
     if (isLeft(e)) {
-      _up();
+      // 第一列再按左 = 回上级目录（电视上的习惯）
+      if (_index % _cols == 0) {
+        _up();
+      } else {
+        _move(_index - 1);
+      }
+      return KeyEventResult.handled;
+    }
+    if (isRight(e)) {
+      _move(_index + 1);
       return KeyEventResult.handled;
     }
     if (isMenu(e)) {
       if (n > 0) _actions(_items[clampInt(_index, 0, n - 1)]);
       return KeyEventResult.handled;
     }
-    if (isSelect(e) || isRight(e)) {
+    if (isSelect(e)) {
       if (n > 0) _open(_items[clampInt(_index, 0, n - 1)]);
       return KeyEventResult.handled;
     }
@@ -559,16 +599,19 @@ class _FileManagerPageState extends State<FileManagerPage> {
     final next = clampInt(v, 0, _items.length - 1);
     if (next == _index) return;
     setState(() => _index = next);
-    if (!_scroll.hasClients) return;
-    const rowH = 70.0;
-    final top = next * rowH;
+    _ensureVisible();
+  }
+
+  void _ensureVisible() {
+    if (!_scroll.hasClients || _cols <= 0) return;
+    final row = _index ~/ _cols;
+    const gap = 10.0;
+    final top = row * (_tileH + gap);
     final vp = _scroll.position.viewportDimension;
     if (top < _scroll.offset) {
-      _scroll.animateTo(top,
-          duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
-    } else if (top + rowH > _scroll.offset + vp) {
-      _scroll.animateTo(top + rowH - vp,
-          duration: const Duration(milliseconds: 140), curve: Curves.easeOut);
+      _scroll.jumpTo(top);
+    } else if (top + _tileH > _scroll.offset + vp) {
+      _scroll.jumpTo(top + _tileH - vp + gap);
     }
   }
 
@@ -588,7 +631,9 @@ class _FileManagerPageState extends State<FileManagerPage> {
               _header(),
               Expanded(child: _body()),
               StatusBar(
-                text: _status.isNotEmpty ? _status : 'OK 打开 · 菜单键 操作 · ← 返回上级',
+                text: _status.isNotEmpty
+                    ? _status
+                    : 'OK 打开 · 菜单键 操作 · 方向键移动 · ← 第一列=返回上级',
                 warn: _status.contains('失败') || _status.contains('读不了'),
               ),
             ],
@@ -659,8 +704,8 @@ class _FileManagerPageState extends State<FileManagerPage> {
                   GestureDetector(
                     onTap: () => _enter(c.$2),
                     child: Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 2),
                       child: Text(
                         c.$1,
                         style: TextStyle(
@@ -710,61 +755,88 @@ class _FileManagerPageState extends State<FileManagerPage> {
       );
     }
 
+    final compact = isCompact(context);
     return LayoutBuilder(
-      builder: (context, c) => Center(
-        child: SizedBox(
-          width: c.maxWidth > 900 ? 900 : c.maxWidth,
-          child: ListView.builder(
-            controller: _scroll,
-            padding:
-                EdgeInsets.fromLTRB(pagePad(context), 4, pagePad(context), 18),
-            itemCount: _items.length,
-            itemBuilder: (context, i) {
-              final e = _items[i];
-              final isDir = e is Directory;
-              final name = _baseName(e.path);
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: SizedBox(
-                  height: 64,
-                  child: TvRow(
-                    focused: _node.hasFocus && i == _index,
-                    title: name,
-                    subtitle: isDir ? '文件夹' : _subtitleOf(e),
-                    leading: Icon(
-                      isDir ? Icons.folder_rounded : _iconOf(name),
-                      size: 22,
-                      color: isDir ? TvColors.accent : TvColors.textDim,
-                    ),
-                    trailing: isDir
-                        ? const Icon(Icons.chevron_right,
-                            color: TvColors.textDim)
-                        : null,
-                    onTap: () {
-                      setState(() => _index = i);
-                      _node.requestFocus();
-                      if (isDir) {
-                        _enter(e.path);
-                      } else {
-                        _actions(e);
-                      }
-                    },
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
+      builder: (context, c) {
+        // 平铺列数：按可用宽度算，保证每格不少于 ~150dp（名字看得清）
+        final minW = compact ? 118.0 : 158.0;
+        final cols = clampInt((c.maxWidth / minW).floor(), 2, 8);
+        _cols = cols;
+        const gap = 10.0;
+        final w =
+            (c.maxWidth - pagePad(context) * 2 - gap * (cols - 1)) / cols;
+        _tileH = w * (compact ? 1.0 : 0.92);
 
-  String _subtitleOf(FileSystemEntity e) {
-    try {
-      return fmtBytes((e as File).lengthSync());
-    } catch (_) {
-      return '文件';
-    }
+        if (_index >= _items.length) _index = _items.length - 1;
+
+        return GridView.builder(
+          controller: _scroll,
+          padding:
+              EdgeInsets.fromLTRB(pagePad(context), 4, pagePad(context), 18),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols,
+            mainAxisSpacing: gap,
+            crossAxisSpacing: gap,
+            mainAxisExtent: _tileH,
+          ),
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final n = _items[i];
+            return FocusFrame(
+              focused: _node.hasFocus && i == _index,
+              radius: 12,
+              color: TvColors.card,
+              padding: const EdgeInsets.all(8),
+              onTap: () {
+                setState(() => _index = i);
+                _node.requestFocus();
+                if (n.isDir) {
+                  _enter(n.path);
+                } else {
+                  _actions(n);
+                }
+              },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: Icon(
+                        n.isDir ? Icons.folder_rounded : _iconOf(n.name),
+                        size: compact ? 40 : 52,
+                        color:
+                            n.isDir ? const Color(0xFFE8B84B) : TvColors.accent,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    n.name,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 12 : 13.5,
+                      height: 1.25,
+                      fontWeight: FontWeight.w600,
+                      color: TvColors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    n.isDir ? '文件夹' : fmtBytes(n.size),
+                    maxLines: 1,
+                    style: const TextStyle(
+                        fontSize: 10.5, color: TvColors.textDim),
+                  ),
+                  const SizedBox(height: 2),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   IconData _iconOf(String name) {

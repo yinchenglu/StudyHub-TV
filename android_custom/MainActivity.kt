@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -215,13 +216,38 @@ class MainActivity : FlutterActivity() {
                 main.post { result.success(openLocalFile(path)) }
             }
 
-            "openAutostart" -> main.post { result.success(openAutostart()) }
+            "openAutostart" -> worker.execute {
+                // 索引（全机 Activity）在 worker 里建好，启动动作回主线程做
+                activityIndex()
+                val hit = try {
+                    openAutostart()
+                } catch (t: Throwable) {
+                    ""
+                }
+                main.post { result.success(hit) }
+            }
 
             // ---------------- v1.5 新增 ----------------
 
-            "openSystemSettings" -> main.post { result.success(openSystemSettings()) }
+            "openSystemSettings" -> worker.execute {
+                activityIndex()
+                val hit = try {
+                    openSystemSettings()
+                } catch (t: Throwable) {
+                    ""
+                }
+                main.post { result.success(hit) }
+            }
 
-            "openInputSource" -> main.post { result.success(openInputSource()) }
+            "openInputSource" -> worker.execute {
+                activityIndex()
+                val hit = try {
+                    openInputSource()
+                } catch (t: Throwable) {
+                    ""
+                }
+                main.post { result.success(hit) }
+            }
 
             "tvInputs" -> worker.execute {
                 val list: List<Map<String, Any?>> = try {
@@ -518,15 +544,16 @@ class MainActivity : FlutterActivity() {
             if (parts.size != 2) continue
             val pkg = parts[0]
             val cls = if (parts[1].startsWith(".")) pkg + parts[1] else parts[1]
-            try {
-                val i = Intent()
-                    .setComponent(ComponentName(pkg, cls))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(i)
-                return name
-            } catch (t: Throwable) {
-                // 这家 ROM 没有这个页面，继续试下一个
-            }
+            if (launchComponent(pkg, cls)) return name
+        }
+        // 厂商自家页面名字千奇百怪，按关键词全机捞一遍
+        val words = listOf(
+            "autostart", "auto_start", "startupmgr", "startup", "bootstart",
+            "selfstart", "startmanage", "bootlaunch",
+            "自启动", "自启", "开机启动", "启动管理", "开机自启",
+        )
+        for ((pkg, cls) in findByKeywords(words)) {
+            if (launchComponent(pkg, cls)) return "kw:$pkg/$cls"
         }
         openAppInfo(packageName)
         return ""
@@ -536,8 +563,25 @@ class MainActivity : FlutterActivity() {
     // 三、v1.5 工具增强：系统设置 / 信号源 / 后台清理 / 提包 / 压缩解压 / 自启动
     // =================================================================
 
-    /** 直接打开系统设置首页 */
-    private fun openSystemSettings(): Boolean = startSafely(Intent(Settings.ACTION_SETTINGS))
+    /** 系统设置的各种可能入口（不同 ROM 命中不同的那条） */
+    private val SETTINGS_ACTIONS = listOf(
+        Settings.ACTION_SETTINGS,                        // android.settings.SETTINGS
+        "android.settings.SETTINGS_EMBEDDED_DEEP_LINK",  // 部分国产 TV 用这个
+        "com.android.settings.action.SETTINGS",
+    )
+
+    /** 信号源 / 输入源的各种可能入口（安卓没有统一 API，只能挨个试） */
+    private val INPUT_ACTIONS = listOf(
+        "android.settings.TV_INPUT_SETTINGS",
+        "android.settings.TV_SETTINGS",
+        "android.settings.TV_INPUT_SOURCE",
+        "com.hisense.intent.action.SOURCE",              // 海信
+        "com.skyworth.intent.action.SOURCE",             // 创维
+        "com.tcl.tvsource.ACTION_SOURCE",                // TCL
+        "com.letv.tvsource.ACTION_SOURCE",               // 乐视
+        "com.mstar.android.intent.action.SOURCE_SWITCH", // MStar 方案（很多盒子）
+        "com.mediatek.intent.action.SOURCE_SWITCH",      // MTK 方案
+    )
 
     private fun startSafely(i: Intent): Boolean = try {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -547,28 +591,127 @@ class MainActivity : FlutterActivity() {
         false
     }
 
+    private fun launchComponent(pkg: String, cls: String): Boolean {
+        if (pkg.isEmpty() || cls.isEmpty()) return false
+        return startSafely(Intent().setComponent(ComponentName(pkg, cls)))
+    }
+
+    /**
+     * 全机 Activity 索引（包名 / 类名 / 应用名）。
+     *
+     * 为什么需要它：国产电视的"系统设置""信号源""自启动管理"根本没有统一的
+     * action，甚至不响应 android.settings.SETTINGS —— 它们就是普通的 Activity，
+     * 名字叫 TvSourceActivity / AutoStartActivity 之类。既然猜不到 action，
+     * 就把全机的 Activity 列出来按关键词找，找到哪个就试哪个。
+     * 结果缓存，只扫一次（一两百毫秒），别每次点击都扫。
+     */
+    private var _index: List<Triple<String, String, String>>? = null
+
+    private fun activityIndex(): List<Triple<String, String, String>> {
+        _index?.let { return it }
+        val out = ArrayList<Triple<String, String, String>>()
+        val pm = packageManager
+        try {
+            val flags = PackageManager.GET_ACTIVITIES or
+                PackageManager.GET_DISABLED_COMPONENTS
+            for (pi in pm.getInstalledPackages(flags)) {
+                val app = pi.applicationInfo ?: continue
+                val label = try {
+                    pm.getApplicationLabel(app).toString()
+                } catch (t: Throwable) {
+                    pi.packageName
+                }
+                val acts = pi.activities
+                if (acts != null) {
+                    for (a in acts) {
+                        if (!a.exported) continue
+                        out.add(Triple(pi.packageName, a.name, label))
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        _index = out
+        return out
+    }
+
+    /** 按关键词找可启动的 Activity：先匹配类名，再匹配应用名（"信号源"这种桌面名） */
+    private fun findByKeywords(words: List<String>, limit: Int = 14): List<Pair<String, String>> {
+        val idx = activityIndex()
+        val hits = ArrayList<Pair<String, String>>()
+        val low = words.map { it.lowercase() }
+
+        for ((pkg, cls, _) in idx) {
+            if (pkg == packageName) continue
+            val c = cls.lowercase()
+            if (low.any { it.isNotEmpty() && c.contains(it) }) hits.add(pkg to cls)
+            if (hits.size >= limit) return hits
+        }
+        for ((pkg, cls, label) in idx) {
+            if (pkg == packageName) continue
+            if (hits.any { it.first == pkg && it.second == cls }) continue
+            val l = label.lowercase()
+            if (low.any { it.isNotEmpty() && l.contains(it) }) hits.add(pkg to cls)
+            if (hits.size >= limit) break
+        }
+        return hits
+    }
+
+    /**
+     * 直接打开系统设置首页。
+     *
+     * 返回命中方式的描述（空字符串 = 全都没命中，只打开了本应用详情页）。
+     * 三步走的理由：先试标准 action（AOSP / 大部分盒子），再试显式组件，
+     * 最后把包名带 settings 的应用的桌面入口拉起来 —— 厂商改过的 ROM
+     * 基本只有最后这条能走通。
+     */
+    private fun openSystemSettings(): String {
+        for (a in SETTINGS_ACTIONS) {
+            if (startSafely(Intent(a))) return a
+        }
+        for (c in listOf(
+            "com.android.settings/com.android.settings.Settings",
+            "com.android.settings/.Settings",
+        )) {
+            val parts = c.split("/")
+            if (parts.size != 2) continue
+            val cls = if (parts[1].startsWith(".")) parts[0] + parts[1] else parts[1]
+            if (launchComponent(parts[0], cls)) return c
+        }
+        val pm = packageManager
+        for (pi in pm.getInstalledPackages(0)) {
+            val p = pi.packageName.lowercase()
+            if (!p.contains("setting")) continue
+            val i = pm.getLaunchIntentForPackage(pi.packageName) ?: continue
+            if (startSafely(i)) return "launcher:${pi.packageName}"
+        }
+        openAppInfo(packageName)
+        return ""
+    }
+
     /**
      * 打开信号源切换界面。
      *
      * 安卓没有统一的"切信号源"API —— 那是电视整机厂商的功能，藏在自家的
      * TvSettings 里，而且只有电视/盒子有这玩意儿，手机上没有。
-     * 所以这里按"TV 原生 → 国产厂商"的顺序挨个试 action，谁在就用谁；
-     * 全都不在就退到系统设置首页，让人自己去找"信号源"。
-     * 返回命中的 action（空字符串 = 一个都没命中，只开了系统设置）。
+     * 顺序：标准 TIF action → 厂商 action → 按关键词全机找 Activity
+     *      （类名/桌面名里带 source / 信号源 / HDMI 的那个）→ 退系统设置。
+     *
+     * 返回："input:xxx" 表示真的进了信号源界面；"settings" 表示只打开了设置；
+     *      空字符串表示什么都没打开。
      */
     private fun openInputSource(): String {
-        val tries = listOf(
-            "android.settings.TV_INPUT_SETTINGS",
-            "android.settings.TV_SETTINGS",
-            "com.hisense.intent.action.SOURCE",     // 海信
-            "com.skyworth.intent.action.SOURCE",    // 创维
-            "com.tcl.tvsource.ACTION_SOURCE",       // TCL
-            "com.letv.tvsource.ACTION_SOURCE",      // 乐视
-        )
-        for (a in tries) {
-            if (startSafely(Intent(a))) return a
+        for (a in INPUT_ACTIONS) {
+            if (startSafely(Intent(a))) return "input:$a"
         }
-        return if (startSafely(Intent(Settings.ACTION_SETTINGS))) "" else ""
+        val words = listOf(
+            "tvsource", "tv_source", "inputsource", "input_source", "sourceactivity",
+            "tvcapture", "hdmi", "信号源", "信源", "输入源",
+        )
+        for ((pkg, cls) in findByKeywords(words)) {
+            if (launchComponent(pkg, cls)) return "input:kw:$pkg/$cls"
+        }
+        return if (openSystemSettings().isNotEmpty()) "settings" else ""
     }
 
     /** 系统里登记的信号源列表（电视机型才有，手机是空的） */
@@ -817,27 +960,37 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** 注册了开机广播的应用 = 会自启动的应用 */
+    /**
+     * 开机自启动的应用。
+     *
+     * 判定口径按可靠程度分三级（逐级补充，前面有结果就不再往后堆）：
+     *   1. 注册了开机广播的接收器 —— 最准。注意开机广播不止 BOOT_COMPLETED
+     *      一个，国产 ROM 普遍用 QUICKBOOT_POWERON，只查前者会漏掉一大半。
+     *   2. 申请了 RECEIVE_BOOT_COMPLETED 权限的应用 —— 广播查不到时的兜底。
+     *   3. 都不行就返回空，界面会明说只能走系统自带的自启动管理。
+     */
+    private val BOOT_ACTIONS = listOf(
+        Intent.ACTION_BOOT_COMPLETED,
+        "android.intent.action.QUICKBOOT_POWERON",
+        "com.htc.intent.action.QUICKBOOT_POWERON",
+        "android.intent.action.LOCKED_BOOT_COMPLETED",
+    )
+
     private fun listBootApps(): List<Map<String, Any?>> {
-        val ris = try {
-            packageManager.queryBroadcastReceivers(Intent(Intent.ACTION_BOOT_COMPLETED), 0)
-        } catch (t: Throwable) {
-            emptyList<ResolveInfo>()
-        }
+        val pm = packageManager
         val seen = HashSet<String>()
         val out = ArrayList<Map<String, Any?>>()
-        for (ri in ris) {
-            val ai = ri.activityInfo ?: continue
-            val pkg = ai.packageName
-            if (pkg == packageName) continue
-            if (!seen.add(pkg)) continue
+
+        fun add(pkg: String) {
+            if (pkg == packageName) return
+            if (!seen.add(pkg)) return
             val info = try {
-                packageManager.getApplicationInfo(pkg, 0)
+                pm.getApplicationInfo(pkg, 0)
             } catch (t: Throwable) {
                 null
-            } ?: continue
+            } ?: return
             val label = try {
-                packageManager.getApplicationLabel(info).toString()
+                pm.getApplicationLabel(info).toString()
             } catch (t: Throwable) {
                 pkg
             }
@@ -850,6 +1003,37 @@ class MainActivity : FlutterActivity() {
                 )
             )
         }
+
+        // 1) 广播接收器（含被禁用的组件，否则"已禁止"的反而消失）
+        val flags = PackageManager.MATCH_DISABLED_COMPONENTS or
+            PackageManager.GET_DISABLED_COMPONENTS
+        for (act in BOOT_ACTIONS) {
+            val ris = try {
+                pm.queryBroadcastReceivers(Intent(act), flags)
+            } catch (t: Throwable) {
+                emptyList<ResolveInfo>()
+            }
+            for (ri in ris) {
+                val ai = ri.activityInfo ?: continue
+                add(ai.packageName)
+            }
+        }
+
+        // 2) 兜底：申请了 RECEIVE_BOOT_COMPLETED 的应用
+        if (out.isEmpty()) {
+            val pkgs = try {
+                pm.getInstalledPackages(PackageManager.GET_PERMISSIONS)
+            } catch (t: Throwable) {
+                emptyList()
+            }
+            for (pi in pkgs) {
+                val perms = pi.requestedPermissions ?: continue
+                if (perms.contains("android.permission.RECEIVE_BOOT_COMPLETED")) {
+                    add(pi.packageName)
+                }
+            }
+        }
+
         out.sortWith(compareBy({ it["system"] as Boolean }, { it["label"] as String }))
         return out
     }

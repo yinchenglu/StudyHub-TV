@@ -65,17 +65,17 @@ class SettingsPanel extends StatelessWidget {
         trailingText: s.playMode.label,
         onTap: () => app.updateSetting(() => s.setPlayMode(s.playMode.next)),
       ),
+      // v1.6：这里原来有「跳过片头 / 片尾」一项，已经去掉。
+      // 跳片头片尾改成了**按目录**记（在播放器里按菜单键设置），
+      // 放在全局设置里既表达不了"哪个目录"，又和播放器里的入口重复。
       TvListItem(
-        title: '跳过片头 / 片尾',
-        subtitle: '播放时按菜单键，在「播放设置」里用当前时间当片头、剩余时间当片尾',
-        icon: Icons.first_page_rounded,
-        trailingText: (s.skipStartSec == 0 && s.skipEndSec == 0)
-            ? '关闭'
-            : '${s.skipStartSec}s / ${s.skipEndSec}s',
-        onTap: () => app.updateSetting(() async {
-          await s.setSkipStartSec(0);
-          await s.setSkipEndSec(0);
-        }),
+        title: '视频硬解',
+        subtitle: s.hwDecode
+            ? '当前：交给电视自带的解码器（省电、1080p 更顺，个别机型会花屏就关掉）'
+            : '当前：软件解码（兼容性最好，但高码率可能卡）',
+        icon: Icons.memory_outlined,
+        trailingText: s.hwDecode ? '开' : '关',
+        onTap: () => app.updateSetting(() => s.setHwDecode(!s.hwDecode)),
       ),
       TvListItem(
         title: '启动时默认打开',

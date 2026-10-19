@@ -6,8 +6,11 @@ import '../core/theme.dart';
 /// 焦点框。整个 App 的"光标"就靠它 —— 电视上没有鼠标，
 /// 用户唯一的空间感来源就是这块高亮描边。
 ///
-/// 为什么用 3 点描边 + 轻微放大，而不是 Material 的 InkWell 水波纹：
-/// 3 米外看，水波纹根本看不见，而描边 + 放大 3% 一眼就能定位。
+/// v1.6 去掉了 AnimatedScale / AnimatedContainer：
+///   低端电视盒子上 GPU 很弱，每按一下方向键都要对整块卡片做一次
+///   120ms 的缩放+颜色补间，掉帧非常明显（用户反馈"菜单切换很卡"）。
+///   现在改成"立刻切"——遥控器的操作反馈本来就该是即时的，
+///   电视系统自己的焦点框也都没有渐变。
 class FocusFrame extends StatelessWidget {
   const FocusFrame({
     super.key,
@@ -28,37 +31,31 @@ class FocusFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: focused ? 1.03 : 1.0,
-      duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        padding: padding,
-        decoration: BoxDecoration(
-          color: color ?? (focused ? TvColors.cardActive : Colors.transparent),
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(
-            color: focused ? TvColors.focus : Colors.transparent,
-            width: 3,
-          ),
-          boxShadow: focused
-              ? [
-                  BoxShadow(
-                    color: alpha(TvColors.focus, 0.28),
-                    blurRadius: 18,
-                    spreadRadius: 1,
-                  ),
-                ]
-              : null,
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color ?? (focused ? TvColors.cardActive : Colors.transparent),
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(
+          color: focused ? TvColors.focus : Colors.transparent,
+          width: 3,
         ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(radius),
-            onTap: onTap,
-            child: child,
-          ),
+        boxShadow: focused
+            ? [
+                BoxShadow(
+                  color: alpha(TvColors.focus, 0.28),
+                  blurRadius: 18,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: onTap,
+          child: child,
         ),
       ),
     );
