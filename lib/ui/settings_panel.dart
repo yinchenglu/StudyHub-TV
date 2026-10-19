@@ -5,6 +5,7 @@ import '../core/fmt.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../data/thumb_cache.dart';
+import '../native/system_channel.dart';
 import '../state/app_state.dart';
 import 'list_panel.dart';
 
@@ -101,6 +102,15 @@ class SettingsPanel extends StatelessWidget {
         },
       ),
       TvListItem(
+        title: '下载保存位置',
+        subtitle: s.downloadDir.isEmpty
+            ? '当前：应用专属目录（不需要存储权限，最稳）'
+            : '当前：${s.downloadDir}',
+        icon: Icons.folder_special_outlined,
+        trailingText: s.downloadDir.isEmpty ? '默认' : '自定义',
+        onTap: () => _pickDownloadDir(context),
+      ),
+      TvListItem(
         title: '连接测试',
         subtitle: '检查账号、目录权限，以及视频能不能拖进度条',
         icon: Icons.network_check_rounded,
@@ -156,8 +166,139 @@ class SettingsPanel extends StatelessWidget {
     }
   }
 
-  Future<void> _cleanThumbs(BuildContext context) async {
-    final before = await ThumbCache.instance.usage();
+  /// 选下载落盘目录。
+  ///
+  /// 为什么给"预设 + 自定义"而不是图形化目录选择器：
+  ///   安卓 11 之后访问整块存储要用户单独去系统里开"所有文件访问"，
+  ///   用 SAF 目录选择器（file_picker）又得引一个大依赖、还会返回
+  ///   content:// 这种 dart:io 用不了的路径。预设值 + 手填路径最省事，
+  ///   填错了下载时会自动退回应用专属目录，不会丢文件。
+  Future<void> _pickDownloadDir(BuildContext context) async {
+    final s = app.store;
+    final st = await SystemChannel.storage();
+    if (!context.mounted) return;
+    final emu = (st?.emulated.isNotEmpty ?? false)
+        ? st!.emulated
+        : '/storage/emulated/0';
+
+    final presets = <String, String>{
+      '': '应用专属目录（默认，不需要任何权限）',
+      '$emu/Download/StudyHubTV': '内部存储 / Download / StudyHubTV',
+      '$emu/StudyHubTV': '内部存储 / StudyHubTV',
+    };
+
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: TvColors.panel,
+        title: const Text('下载文件存到哪'),
+        children: [
+          for (final e in presets.entries)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, e.key),
+              child: Row(
+                children: [
+                  Icon(
+                    s.downloadDir == e.key
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 18,
+                    color: s.downloadDir == e.key
+                        ? TvColors.accent
+                        : TvColors.textDim,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(e.value,
+                            style: const TextStyle(fontSize: 14.5)),
+                        if (e.key.isNotEmpty)
+                          Text(e.key,
+                              style: const TextStyle(
+                                  fontSize: 11.5, color: TvColors.textDim)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const Divider(height: 18, color: TvColors.divider),
+          SimpleDialogOption(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _inputCustomDir(context, emu);
+            },
+            child: const Row(
+              children: [
+                Icon(Icons.edit_outlined, size: 18, color: TvColors.textDim),
+                SizedBox(width: 10),
+                Text('手动输入路径…', style: TextStyle(fontSize: 14.5)),
+              ],
+            ),
+          ),
+          if (st != null && !st.allFiles)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Text(
+                '提示：安卓 11 以上要写系统目录，得先去「工具 → 文件管理」里'
+                '点一下"开启所有文件访问"。没开也能下载，会自动存到应用专属目录。',
+                style: TextStyle(
+                    fontSize: 12, height: 1.5, color: TvColors.textDim),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (picked == null) return;
+    await app.updateSetting(() => s.setDownloadDir(picked));
+    if (!context.mounted) return;
+    _toast(context, picked.isEmpty ? '下载目录已设为应用专属目录' : '下载目录已设为 $picked');
+  }
+
+  Future<void> _inputCustomDir(BuildContext context, String emu) async {
+    final ctrl = TextEditingController(text: app.store.downloadDir);
+    final path = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TvColors.panel,
+        title: const Text('下载目录'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: '$emu/Download/StudyHubTV',
+                helperText: '留空 = 应用专属目录',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (path == null) return;
+    await app.updateSetting(() => app.store.setDownloadDir(path));
+    if (!context.mounted) return;
+    _toast(context, path.isEmpty ? '已恢复默认目录' : '已保存：$path');
+  }
+
+  Future<void> _cleanThumbs(BuildContext context) async {    final before = await ThumbCache.instance.usage();
     await app.clearThumbs();
     if (!context.mounted) return;
     _toast(context,

@@ -1,3 +1,5 @@
+import 'dart:io' show File;
+
 import '../models.dart';
 import 'smb_source.dart';
 import 'webdav_source.dart';
@@ -23,6 +25,14 @@ abstract class RemoteSource {
 
   /// 拿到播放器 / 图片组件能直接用的地址（纯字符串拼接，同步返回）
   MediaRef ref(String rel);
+
+  /// 把一个本地文件传到远端（[rel] 是相对账号根目录的路径，含文件名）。
+  ///
+  /// v1.5 新增，只有 WebDAV 实现了 PUT；SMB 那边 smb_connect 的写支持
+  /// 不完整，所以默认实现直接抛"不支持"，界面据此提示用户换 WebDAV。
+  Future<void> put(String rel, File local) {
+    throw RemoteException('${account.proto.label} 暂不支持上传，请改用 WebDAV 账号');
+  }
 
   Future<void> dispose();
 

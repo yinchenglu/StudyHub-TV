@@ -27,7 +27,7 @@ class MemoryPage extends StatefulWidget {
 class _MemoryPageState extends State<MemoryPage> {
   final FocusNode _node = FocusNode(debugLabel: 'memory');
   int _index = 0;
-  int _actionCount = 3;
+  int _actionCount = 4;
 
   MemInfo? _mem;
   bool _loading = true;
@@ -95,6 +95,36 @@ class _MemoryPageState extends State<MemoryPage> {
     });
   }
 
+  /// 杀后台第三方应用（v1.5）。
+  ///
+  /// 手段是 ActivityManager.killBackgroundProcesses —— 安卓给普通应用的
+  /// 唯一合法通道，配合 KILL_BACKGROUND_PROCESSES 权限（安装即授权）。
+  /// 桌面、系统应用、本应用都不在清理范围内（见 MainActivity 里的白名单逻辑）。
+  /// 安卓 5.1 以后系统不再把别人的进程列表给普通应用看，那种机器上会返回 0 个，
+  /// 界面要如实说明，别让用户以为"清了个寂寞"。
+  Future<void> _cleanBg() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _status = '正在清理后台应用…';
+    });
+    final r = await SystemChannel.cleanBackground();
+    final m = await SystemChannel.memory();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _mem = m;
+      if (r == null) {
+        _status = '这台设备不支持清后台（需要系统权限）';
+      } else if (r.killed == 0) {
+        _status = '没有可清的后台应用（安卓 5.1 以上系统不再把别人的进程列表公开）';
+      } else {
+        _status = '已清理 ${r.killed} 个后台应用'
+            '${r.freed > 0 ? '，可用内存多了 ${_bytes(r.freed)}' : ''}';
+      }
+    });
+  }
+
   Future<void> _cleanThumbs() async {
     if (_busy) return;
     final before = _thumbs;
@@ -143,6 +173,9 @@ class _MemoryPageState extends State<MemoryPage> {
         _cleanAll();
         break;
       case 1:
+        _cleanBg();
+        break;
+      case 2:
         _cleanThumbs();
         break;
       default:
@@ -187,9 +220,13 @@ class _MemoryPageState extends State<MemoryPage> {
                                 _actions(),
                                 const SizedBox(height: 16),
                                 const Text(
-                                  '安卓不允许一个应用去清别的应用的内存（能这么干的只有系统自己）。'
-                                  '这里清的是 StudyHub TV 自己的缓存：视频封面、临时文件。\n'
-                                  '删掉之后界面会更顺一点，下次进目录时会重新抽封面，不影响别的数据。',
+                                  '「一键清理 / 只清缩略图」清的是 StudyHub TV 自己的缓存：'
+                                  '视频封面、临时文件，删了不影响别的数据。\n'
+                                  '「清理后台应用」用的是系统给普通应用的 killBackgroundProcesses：'
+                                  '能杀后台的第三方进程，杀不掉前台应用和系统应用，'
+                                  '桌面和本应用也不会动。安卓 5.1 以上系统不再公开别人的进程列表，'
+                                  '那种机器上这一项可能清不到东西 —— 这时请去系统设置的'
+                                  '「应用 → 正在运行」里手动停。',
                                   style: TextStyle(
                                       fontSize: 13,
                                       height: 1.6,
@@ -327,6 +364,11 @@ class _MemoryPageState extends State<MemoryPage> {
         Icons.auto_fix_high_rounded,
         '一键清理',
         '清掉所有缓存并让系统回收一轮内存，电视卡的时候点这个'
+      ),
+      (
+        Icons.layers_clear_outlined,
+        '清理后台应用',
+        '杀掉桌面、系统应用、本应用之外的后台进程（老盒子上效果明显）'
       ),
       (
         Icons.image_not_supported_outlined,

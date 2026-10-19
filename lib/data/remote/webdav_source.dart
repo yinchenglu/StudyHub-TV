@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HttpDate;
+import 'dart:io' show File, HttpDate;
 
 import 'package:dio/dio.dart';
 import 'package:xml/xml.dart';
@@ -246,6 +246,39 @@ class WebDavSource implements RemoteSource {
 
   @override
   MediaRef ref(String rel) => MediaRef(_url(_absolute(rel)), headers);
+
+  // ----------------------------------------------------------- 上传
+
+  @override
+  Future<void> put(String rel, File local) async {
+    if (!await local.exists()) {
+      throw RemoteException('本地文件不存在：${local.path}');
+    }
+    final len = await local.length();
+    try {
+      final resp = await _dio.put(
+        _url(_absolute(rel)),
+        data: local.openRead(),
+        options: Options(
+          headers: {
+            ...headers,
+            // 流式请求 dio 不会自动带长度，手动给上，服务器才好判断进度
+            'Content-Length': len,
+          },
+          contentType: 'application/octet-stream',
+          sendTimeout: const Duration(minutes: 30),
+          receiveTimeout: const Duration(minutes: 2),
+          validateStatus: (s) => s != null,
+        ),
+      );
+      final code = resp.statusCode ?? 0;
+      if (code < 200 || code >= 300) {
+        throw RemoteException('上传失败：HTTP $code（$rel）');
+      }
+    } on DioException catch (e) {
+      throw RemoteException('上传失败：${_friendly(e)}');
+    }
+  }
 
   // ----------------------------------------------------------- 自检
 

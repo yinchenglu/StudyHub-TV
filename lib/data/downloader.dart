@@ -1,10 +1,12 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/fmt.dart';
 import 'models.dart';
+import 'store.dart';
 
 /// 「工具 → 下载工作」用的下载器。
 ///
@@ -20,7 +22,30 @@ class Downloader {
 
   static Directory? _dir;
 
-  static Future<Directory> targetDir() async {
+  /// 用户在「设置 → 下载保存位置」里指定的目录；空 = 用默认的应用专属目录
+  static String _custom() {
+    try {
+      return Store.instance.downloadDir;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 指定的目录能不能用：建得出来、写得进去才算
+  static Future<bool> _usable(Directory d) async {
+    try {
+      if (!await d.exists()) await d.create(recursive: true);
+      final probe = File('${d.path}${Platform.pathSeparator}.probe');
+      await probe.writeAsString('ok', flush: true);
+      await probe.delete();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 默认目录：应用专属外部目录，任何安卓版本都不需要权限
+  static Future<Directory> _defaultDir() async {
     final cached = _dir;
     if (cached != null && await cached.exists()) return cached;
     Directory base;
@@ -34,6 +59,18 @@ class Downloader {
     if (!await d.exists()) await d.create(recursive: true);
     _dir = d;
     return d;
+  }
+
+  static Future<Directory> targetDir() async {
+    final want = _custom();
+    if (want.isNotEmpty) {
+      final d = Directory(want);
+      if (await _usable(d)) return d;
+      // 自定义目录不可用（U 盘拔了 / 没给全盘权限）时绝不静默失败，
+      // 退回默认目录继续下，用户至少能拿到文件
+      debugPrint('自定义下载目录不可用，退回默认目录：$want');
+    }
+    return _defaultDir();
   }
 
   /// 文件名里的非法字符换掉（服务器上的名字什么都有，不改的话创建文件会失败）

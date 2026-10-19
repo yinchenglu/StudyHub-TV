@@ -84,6 +84,17 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     _restartSlide();
   }
 
+  /// 顶部那个"自动播放"按钮：没开就从 0 切到 5 秒，开着就关掉。
+  /// 默认是关的（设置里 slideshowSec 默认 0），这里只是给个不用进设置
+  /// 就能开关的入口 —— 电子相框用法下用户会想随时切。
+  void _toggleSlide() {
+    final s = widget.app.store;
+    final next = s.slideshowSec > 0 ? 0 : 5;
+    widget.app.updateSetting(() => s.setSlideshowSec(next));
+    setState(() {});
+    _restartSlide();
+  }
+
   void _toggleBar() {
     setState(() => _bar = !_bar);
     _hideTimer?.cancel();
@@ -218,6 +229,16 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                           ),
                         ],
                       ),
+                    ),
+                    IconButton(
+                      onPressed: _toggleSlide,
+                      tooltip: '自动播放',
+                      icon: Icon(
+                        widget.app.store.slideshowSec > 0
+                            ? Icons.pause_circle_outline
+                            : Icons.play_circle_outline,
+                      ),
+                      iconSize: 26,
                     ),
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),

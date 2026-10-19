@@ -1,3 +1,5 @@
+import 'dart:io' show File, Platform;
+
 import 'package:flutter/foundation.dart';
 
 import '../core/constants.dart';
@@ -321,6 +323,19 @@ class AppState extends ChangeNotifier {
     final src = _source;
     if (src == null) throw RemoteException('还没连上服务器');
     return src.list(path);
+  }
+
+  /// 把电视本地的一个文件传到服务器的 download 目录。
+  ///
+  /// 只支持 WebDAV（SMB 的写支持不完整）；返回传上去之后的远端相对路径。
+  Future<String> uploadLocal(File local) async {
+    final src = _source;
+    if (src == null) throw RemoteException('还没连上服务器，先去「账户」连一下');
+    final name = local.path.split(Platform.pathSeparator).last;
+    final dir = downloadBase;
+    final rel = dir.isEmpty ? name : '$dir/$name';
+    await src.put(rel, local);
+    return rel;
   }
 
   // --------------------------------------------------------------- 账号

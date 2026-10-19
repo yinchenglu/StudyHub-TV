@@ -4,7 +4,8 @@
   用法：CI 里先用 flutter create 生成骨架，再用本文件覆盖
         android/app/src/main/AndroidManifest.xml
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 连自己的 NAS：必需 -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -26,6 +27,28 @@
       安卓 8 起装外来 APK 必须声明这一条，否则 startActivity 静默失败。
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!--
+      v1.5 工具增强需要的一批权限：
+        KILL_BACKGROUND_PROCESSES —— 内存清理时杀后台第三方进程（安装即授权）
+        READ/WRITE_EXTERNAL_STORAGE —— 安卓 9 及以下读写 /sdcard，文件管理要用；
+                                       10 起系统忽略这两条，改用下面的 MANAGE
+        MANAGE_EXTERNAL_STORAGE —— 安卓 11+ 的"所有文件访问"，文件管理要能
+                                    浏览整台电视的存储。装了会在系统设置里
+                                    多一个开关，用户手动打开才真正生效。
+        GET_TASKS —— 老系统上读运行中进程（配合 runningAppProcesses）
+    -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="android.permission.GET_TASKS" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <!--
       电视适配的三条关键声明：

@@ -134,6 +134,71 @@ class _AppManagerPageState extends State<AppManagerPage> {
     _node.requestFocus();
   }
 
+  /// 提取安装包到本机（Android/data/<包名>/files/apk/）
+  Future<void> _extract(InstalledApp a) async {
+    setState(() => _status = '正在提取「${a.label}」的安装包…');
+    final path = await SystemChannel.extractApk(a.package);
+    if (!mounted) return;
+    setState(() {
+      _status = path.isEmpty
+          ? '提取失败：系统不允许读「${a.label}」的安装包'
+          : '已提取到：$path（可在「文件管理」里找到并分享）';
+    });
+    _node.requestFocus();
+  }
+
+  /// 一个应用的全部操作（v1.5：启动 / 卸载 / 提取 / 详情）
+  Future<void> _actions(InstalledApp a) async {
+    final pick = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: TvColors.panel,
+        title: Text(a.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'launch'),
+            child: const _Opt(Icons.play_arrow_rounded, '启动应用'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'extract'),
+            child: const _Opt(Icons.archive_outlined, '提取安装包'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'info'),
+            child: const _Opt(Icons.info_outline, '应用详情'),
+          ),
+          if (!a.self)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, 'uninstall'),
+              child: _Opt(Icons.delete_outline, '卸载',
+                  color: a.system ? TvColors.textDim : TvColors.danger),
+            ),
+        ],
+      ),
+    );
+    if (pick == null) {
+      _node.requestFocus();
+      return;
+    }
+    switch (pick) {
+      case 'launch':
+        await _launch(a);
+        break;
+      case 'extract':
+        await _extract(a);
+        break;
+      case 'info':
+        await SystemChannel.appInfo(a.package);
+        if (!mounted) return;
+        setState(() => _status = '已打开「${a.label}」的系统详情页');
+        _node.requestFocus();
+        break;
+      case 'uninstall':
+        await _uninstall(a);
+        break;
+    }
+  }
+
   // ------------------------------------------------------------- 按键
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
@@ -153,7 +218,7 @@ class _AppManagerPageState extends State<AppManagerPage> {
       return KeyEventResult.handled;
     }
     if (isMenu(e)) {
-      if (n > 0) _uninstall(_apps[clampInt(_index, 0, n - 1)]);
+      if (n > 0) _actions(_apps[clampInt(_index, 0, n - 1)]);
       return KeyEventResult.handled;
     }
     if (isSelect(e)) {
@@ -207,7 +272,7 @@ class _AppManagerPageState extends State<AppManagerPage> {
               StatusBar(
                 text: _status.isNotEmpty
                     ? _status
-                    : 'OK 打开 · → 系统详情 · 菜单键 卸载',
+                    : 'OK 打开 · 菜单键 更多（卸载 / 提取 / 详情）',
                 warn: _status.contains('不能') || _status.contains('不允许'),
               ),
             ],
@@ -320,4 +385,22 @@ class _AppManagerPageState extends State<AppManagerPage> {
       ),
     );
   }
+}
+
+/// 操作弹窗里的一行（图标 + 文字）
+class _Opt extends StatelessWidget {
+  const _Opt(this.icon, this.label, {this.color = TvColors.text});
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          Icon(icon, size: 20, color: color == TvColors.text ? TvColors.textDim : color),
+          const SizedBox(width: 12),
+          Text(label, style: TextStyle(fontSize: 15, color: color)),
+        ],
+      );
 }

@@ -35,7 +35,15 @@ class _DownloadPageState extends State<DownloadPage> {
   final FocusNode _node = FocusNode(debugLabel: 'downloads');
   final ScrollController _scroll = ScrollController();
 
-  String _rel = '';
+  /// 当前所在的**绝对**远端路径。
+  ///
+  /// 这里踩过一个坑（v1.4 用户反馈"子文件夹点进去提示路径不存在"）：
+  /// 原来是存"相对 download 的路径"，进来子目录时传的却是 ls 返回的绝对
+  /// 路径，于是拼成了 download/download/xxx —— 必然 404。
+  /// 现在统一只存绝对路径，面包屑靠 base 前缀算。
+  String _abs = '';
+  bool _pathReady = false;
+
   List<RemoteEntry> _entries = const [];
   bool _loading = true;
   String? _error;
@@ -53,7 +61,12 @@ class _DownloadPageState extends State<DownloadPage> {
 
   String get _base => app.downloadBase;
 
-  String get _abs => _rel.isEmpty ? _base : '$_base/$_rel';
+  /// 相对 download 的那一段（面包屑用）
+  String get _rel {
+    if (_base.isEmpty || _abs == _base) return '';
+    if (_abs.startsWith('$_base/')) return _abs.substring(_base.length + 1);
+    return _abs;
+  }
 
   @override
   void initState() {
@@ -80,6 +93,10 @@ class _DownloadPageState extends State<DownloadPage> {
   // ------------------------------------------------------------- 数据
 
   Future<void> _load() async {
+    if (!_pathReady) {
+      _abs = _base;
+      _pathReady = true;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -115,18 +132,22 @@ class _DownloadPageState extends State<DownloadPage> {
     }
   }
 
-  Future<void> _enter(String rel) async {
-    _rel = rel;
+  /// 进入某个目录（[path] 是远端绝对路径）
+  Future<void> _enter(String path) async {
+    _abs = path;
     await _load();
   }
 
   Future<void> _up() async {
-    if (_rel.isEmpty) {
+    if (_abs.isEmpty || _abs == _base) {
       if (mounted) Navigator.of(context).pop();
       return;
     }
-    final i = _rel.lastIndexOf('/');
-    _rel = i < 0 ? '' : _rel.substring(0, i);
+    final i = _abs.lastIndexOf('/');
+    var parent = i < 0 ? '' : _abs.substring(0, i);
+    // 不许退到 download 之上
+    if (parent.length < _base.length) parent = _base;
+    _abs = parent;
     await _load();
   }
 
@@ -281,7 +302,7 @@ class _DownloadPageState extends State<DownloadPage> {
       spacing: compact ? 4 : 6,
       children: [
         GestureDetector(
-          onTap: () => _enter(''),
+          onTap: () => _enter(_base),
           child: Text('download',
               style: TextStyle(
                 fontSize: fs,
@@ -292,7 +313,9 @@ class _DownloadPageState extends State<DownloadPage> {
         for (var i = 0; i < segs.length; i++) ...[
           const Icon(Icons.chevron_right, size: 16, color: TvColors.textDim),
           GestureDetector(
-            onTap: () => _enter(segs.take(i + 1).join('/')),
+            onTap: () => _enter(_base.isEmpty
+                ? segs.take(i + 1).join('/')
+                : '$_base/${segs.take(i + 1).join('/')}'),
             child: Text(
               segs[i],
               style: TextStyle(

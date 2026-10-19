@@ -13,11 +13,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
 
-  // 不再锁横屏：电视没有重力感应，本来就是横的；但手机装这个 App 时，
-  // 强制横屏会把界面整个转过去、内容被压成一条（就是"显示不全"）。
-  // 现在跟随设备方向，窄屏自动换成底部导航（见 core/layout.dart）。
+  // v1.5 起重新锁横屏（用户明确要求）：电视 / 盒子本来就该是横的，
+  // 手机装上也是横着看片更合理。
+  // 但"锁横屏"必须配"布局按高度自适应"，否则 360dp 高的手机横屏会把
+  // 左侧菜单挤到屏幕外 —— 那部分在 ui/sidebar.dart 和 core/layout.dart 里：
+  //   * 侧栏行高按可用高度分三档缩，菜单区可滚动并跟随焦点
+  //   * 窄屏（<720dp 宽）走底部导航，不显示侧栏
   await SystemChrome.setPreferredOrientations(const [
-    DeviceOrientation.portraitUp,
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);

@@ -32,6 +32,7 @@ class Store {
   static const _kSpeed = 'play_speed';
   static const _kSkipStart = 'skip_start_sec';
   static const _kSkipEnd = 'skip_end_sec';
+  static const _kDownloadDir = 'download_dir';
   static const _kPwdPrefix = 'pwd_';
 
   final _secure = const FlutterSecureStorage();
@@ -198,4 +199,12 @@ class Store {
   /// 跳过片尾：离结束还有多少秒就自动下一个（0 = 关闭）
   int get skipEndSec => _p!.getInt(_kSkipEnd) ?? 0;
   Future<void> setSkipEndSec(int v) async => _p!.setInt(_kSkipEnd, v < 0 ? 0 : v);
+
+  // ------------------------------------------------------------- 下载位置
+
+  /// 「软件下载」把文件存到哪。
+  /// 空字符串 = 默认的应用专属目录（不需要任何存储权限，最稳）。
+  String get downloadDir => _p!.getString(_kDownloadDir) ?? '';
+  Future<void> setDownloadDir(String v) async =>
+      _p!.setString(_kDownloadDir, v.trim());
 }
