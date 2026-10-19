@@ -588,7 +588,7 @@ class MainActivity : FlutterActivity() {
         }
         for (info in list) {
             val label = try {
-                info.loadLabel(packageManager).toString()
+                info.loadLabel(this@MainActivity).toString()
             } catch (t: Throwable) {
                 info.id
             }
