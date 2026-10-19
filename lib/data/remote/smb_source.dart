@@ -24,6 +24,13 @@ class SmbSource implements RemoteSource {
   @override
   final Account account;
 
+  /// SMB 的写支持在 smb_connect 里还不完整，文件管理里的"上传"只能走 WebDAV。
+  /// 与其写一半传坏文件，不如直接说清楚。
+  @override
+  Future<void> put(String rel, File local) {
+    throw RemoteException('SMB 暂不支持上传，上传请用 WebDAV 账号（其他功能不受影响）');
+  }
+
   SmbConnect? _conn;
   SmbBridge? _bridge;
 
