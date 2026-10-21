@@ -27,7 +27,9 @@ class SettingsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = app.store;
     const widths = [320, 480, 720];
-    const densityLabels = ['大', '中', '小'];
+    // v1.7：加了「特小」一档。手机上原来最小档（96dp）一屏也只排 3 列，
+    // 用户反馈还是太大 —— 特小按 74dp 排，360dp 宽能排 4 列、780dp 宽能排 9 列。
+    const densityLabels = ['大', '中', '小', '特小'];
 
     final items = <TvListItem>[
       TvListItem(
@@ -45,9 +47,9 @@ class SettingsPanel extends StatelessWidget {
         title: '卡片大小',
         subtitle: '一屏放多少张。字看不清楚就调大',
         icon: Icons.grid_view_rounded,
-        trailingText: densityLabels[clampInt(s.density, 0, 2)],
+        trailingText: densityLabels[clampInt(s.density, 0, 3)],
         onTap: () {
-          final next = (s.density + 1) % 3;
+          final next = (s.density + 1) % 4;
           app.updateSetting(() => s.setDensity(next));
         },
       ),

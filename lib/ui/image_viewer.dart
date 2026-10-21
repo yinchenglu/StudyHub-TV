@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/fmt.dart';
+import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
 import '../state/app_state.dart';
@@ -18,11 +19,18 @@ import 'keys.dart';
 ///   菜单   弹出设置面板（自动播放间隔 / 关闭）
 ///   返回   退出
 ///
+/// 手机（触屏，v1.7）：
+///   左右滑  上一张 / 下一张（PageView 自带）
+///   长按    弹出同一个设置面板（"播放图片"就是在这里开自动播放）
+///   轻点    显隐信息条
+///
 /// v1.6 的两处改动（用户要求）：
 ///   1. **去掉左右两边的箭头按钮** —— 电视上没有鼠标，箭头纯占画面，
 ///      还容易让人以为是"当前焦点"。切图本来就是左右键的事。
 ///   2. **自动播放收进菜单键弹出的面板** —— 以前是右上角一个小图标，
 ///      遥控器根本对不上焦，等于没法用。现在按菜单键 → 选间隔 → OK。
+///
+/// v1.7：顶部文件名那条 3 秒后自动隐藏，隐藏后就是纯图全屏（电子相框效果）。
 ///
 /// 没有做双指缩放（V1 取舍）：电视上没人用手指放大，
 /// 遥控器也没有对应的键；要放大等 V2 加"OK 键切换 1x/2x"更靠谱。
@@ -62,6 +70,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     _index = clampInt(widget.initial, 0, widget.files.isEmpty ? 0 : widget.files.length - 1);
     _pc = PageController(initialPage: _index);
     _restartSlide();
+    // 打开就先让信息条露 3 秒，之后自动淡出 → 纯图全屏
+    _scheduleBarHide();
   }
 
   @override
@@ -96,6 +106,16 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
     setState(() => _index = next);
     _pc.jumpToPage(next);
     _restartSlide();
+    _scheduleBarHide();
+  }
+
+  /// 3 秒后把信息条收掉（自动播放时也是靠它做到"纯图"）
+  void _scheduleBarHide() {
+    _hideTimer?.cancel();
+    if (!_bar) return;
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _bar = false);
+    });
   }
 
   Future<void> _setSlide(int sec) async {
@@ -108,14 +128,13 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
   void _toggleBar() {
     setState(() => _bar = !_bar);
     _hideTimer?.cancel();
-    if (_bar) {
-      _hideTimer = Timer(const Duration(seconds: 4), () {
-        if (mounted) setState(() => _bar = false);
-      });
-    }
+    if (_bar) _scheduleBarHide();
   }
 
   void _openMenu() {
+    // 面板开着的时候必须停掉自动播放，否则背景图一直在翻，
+    // 用户还没选完就换了一张，误以为点错了。
+    _slideTimer?.cancel();
     setState(() {
       _menu = true;
       _menuIndex = _steps.indexOf(_slideSec) < 0 ? 0 : _steps.indexOf(_slideSec);
@@ -126,6 +145,8 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
 
   void _closeMenu() {
     setState(() => _menu = false);
+    _restartSlide();
+    _scheduleBarHide();
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
@@ -196,6 +217,7 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       );
     }
     final cur = files[_index];
+    final compact = isCompact(context);
 
     return PopScope(
       canPop: !_menu,
@@ -210,62 +232,70 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: PageView.builder(
-                  controller: _pc,
-                  itemCount: files.length,
-                  // 手指滑动时不做动画，跟遥控器一致（低端设备更跟手）
-                  pageSnapping: true,
-                  onPageChanged: (i) {
-                    setState(() => _index = i);
-                    _restartSlide();
-                  },
-                  itemBuilder: (context, i) {
-                    MediaRef ref;
-                    try {
-                      ref = widget.app.ref(files[i].path);
-                    } catch (_) {
-                      return const Center(child: Text('连接已断开'));
-                    }
-                    return CachedNetworkImage(
-                      imageUrl: ref.url,
-                      httpHeaders: ref.headers,
-                      fit: BoxFit.contain,
-                      fadeInDuration: Duration.zero,
-                      // 全屏看图不压解码尺寸（要看清细节），
-                      // 但磁盘缓存仍然只存原图一份
-                      placeholder: (_, __) => const Center(
-                        child: SizedBox(
-                          width: 34,
-                          height: 34,
-                          child: CircularProgressIndicator(strokeWidth: 2.6),
+                // 手机上：轻点显隐信息条，长按弹设置面板（"播放图片"）
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _toggleBar,
+                  onLongPress: _openMenu,
+                  child: PageView.builder(
+                    controller: _pc,
+                    itemCount: files.length,
+                    // 手指滑动时不做动画，跟遥控器一致（低端设备更跟手）
+                    pageSnapping: true,
+                    onPageChanged: (i) {
+                      setState(() => _index = i);
+                      _restartSlide();
+                      _scheduleBarHide();
+                    },
+                    itemBuilder: (context, i) {
+                      MediaRef ref;
+                      try {
+                        ref = widget.app.ref(files[i].path);
+                      } catch (_) {
+                        return const Center(child: Text('连接已断开'));
+                      }
+                      return CachedNetworkImage(
+                        imageUrl: ref.url,
+                        httpHeaders: ref.headers,
+                        fit: BoxFit.contain,
+                        fadeInDuration: Duration.zero,
+                        // 全屏看图不压解码尺寸（要看清细节），
+                        // 但磁盘缓存仍然只存原图一份
+                        placeholder: (_, __) => const Center(
+                          child: SizedBox(
+                            width: 34,
+                            height: 34,
+                            child: CircularProgressIndicator(strokeWidth: 2.6),
+                          ),
                         ),
-                      ),
-                      errorWidget: (_, __, ___) => const Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.broken_image_outlined,
-                                size: 56, color: Colors.white38),
-                            SizedBox(height: 12),
-                            Text('这张图打不开',
-                                style: TextStyle(color: Colors.white54)),
-                          ],
+                        errorWidget: (_, __, ___) => const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.broken_image_outlined,
+                                  size: 56, color: Colors.white38),
+                              SizedBox(height: 12),
+                              Text('这张图打不开',
+                                  style: TextStyle(color: Colors.white54)),
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
 
-              // 顶部信息条
+              // 顶部信息条：3 秒后自动收起（收起后就是纯图全屏）
               if (_bar)
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
                   child: Container(
-                    height: 92,
-                    padding: const EdgeInsets.fromLTRB(26, 18, 20, 10),
+                    height: compact ? 68 : 92,
+                    padding: EdgeInsets.fromLTRB(
+                        compact ? 14 : 26, compact ? 10 : 18, compact ? 8 : 20, 8),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
@@ -278,23 +308,25 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text(
                                 cur.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 19,
+                                style: TextStyle(
+                                  fontSize: compact ? 15 : 19,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 3),
                               Text(
                                 '${_index + 1} / ${widget.files.length}'
                                 '${_slideSec > 0 ? ' · 自动播放 ${_slideSec}s' : ''}'
-                                ' · 菜单键 设置',
-                                style: const TextStyle(
-                                    fontSize: 13, color: TvColors.textDim),
+                                ' · ${compact ? '长按设置' : '菜单键 设置'}',
+                                style: TextStyle(
+                                    fontSize: compact ? 11.5 : 13,
+                                    color: TvColors.textDim),
                               ),
                             ],
                           ),
@@ -302,13 +334,21 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
                         IconButton(
                           onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close),
-                          iconSize: 26,
+                          iconSize: compact ? 22 : 26,
                         ),
                       ],
                     ),
                   ),
                 ),
 
+              // 手机点面板外面就该关掉它，不然会误以为卡住了
+              if (_menu)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _closeMenu,
+                  ),
+                ),
               if (_menu) _menuLayer(),
             ],
           ),
@@ -338,13 +378,20 @@ class _ImageViewerPageState extends State<ImageViewerPage> {
       ),
     ];
 
+    final compact = isCompact(context);
+    final screenW = MediaQuery.sizeOf(context).width;
+    // 手机横屏宽 640～900dp，固定 400 会占掉大半屏；
+    // 窄屏按比例收一点，电视上维持 400。
+    final panelW = screenW < 560 ? screenW * 0.78 : 400.0;
+
     return Positioned(
       left: 0,
       top: 0,
       bottom: 0,
       child: Container(
-        width: 400,
-        padding: const EdgeInsets.fromLTRB(22, 90, 22, 16),
+        width: panelW,
+        padding: EdgeInsets.fromLTRB(
+            22, compact ? 26 : 62, 22, compact ? 12 : 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.centerLeft,

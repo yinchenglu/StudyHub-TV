@@ -10,6 +10,7 @@ import '../core/fmt.dart';
 import '../core/layout.dart';
 import '../core/theme.dart';
 import '../data/models.dart';
+import '../native/system_channel.dart';
 import '../state/app_state.dart';
 import 'keys.dart';
 
@@ -91,6 +92,31 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 当前实际用的解码方式（面板里展示，方便判断卡是不是解码问题）
   String _decoder = '…';
 
+  // --------------------------------------------------------- v1.7 手机手势
+  //
+  // 手机上（触屏）：
+  //   左右拖    调进度（拖动时只看预览，松手才真 seek，避免刷 seek 把缓冲打爆）
+  //   左半边上下 调屏幕亮度（窗口级，不改系统设置）
+  //   右半边上下 调系统媒体音量（真的改手机音量）
+  //
+  // 预览进度用 ValueNotifier 而不是 setState：拖动时每秒几十次重建整页
+  // （含视频纹理）会明显掉帧，进度条自己变就够。
+  final ValueNotifier<double?> _seekN = ValueNotifier(null);
+
+  /// 拖动中显示的中文提示（"亮度 62%" / "跳转到 12:30"）
+  final ValueNotifier<String> _hintN = ValueNotifier('');
+  Timer? _hintTimer;
+
+  /// 竖直拖动起点：亮度起点 / 音量起点（含连续值 _volF，避免慢速拖动不跟手）
+  double? _briStart;
+  int? _volStart;
+  double? _volF;
+  int _volMax = 15;
+
+  /// 这次播放里有没有动过屏幕亮度。动过就在退出时恢复成"跟随系统"，
+  /// 否则窗口亮度会一直停在滑动后的值上。
+  bool _briTouched = false;
+
   RemoteEntry get _cur => widget.files[_index];
   bool get _isVideo => _cur.kind == MediaKind.video;
 
@@ -154,8 +180,13 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     _holdTimer?.cancel();
     _hideTimer?.cancel();
+    _hintTimer?.cancel();
+    // 滑过亮度就恢复"跟随系统"，别让用户回到桌面发现屏幕还暗着
+    if (_briTouched) SystemChannel.resetBrightness();
     _plScroll.dispose();
     _posN.dispose();
+    _seekN.dispose();
+    _hintN.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -472,6 +503,136 @@ class _PlayerPageState extends State<PlayerPage> {
     _toast('已重置这个文件夹的「跳过片尾」');
   }
 
+  // ------------------------------------------------- 控制条上的片头 / 片尾按钮
+  //
+  // 和「上一个 / 下一个」区分开：那两个是换**文件**（切集），
+  // 这两个是换**位置**（同一集里跳到片头之后 / 片尾之前）。
+  // 图标也刻意不同（⏮ 是换集、⇤ 是跳位置），按钮还带文字标签。
+
+  /// 已经设过片头就立刻跳过去；没设过就说清楚怎么设
+  Future<void> _jumpSkipStart() async {
+    if (_skipStart <= 0) {
+      _toast('这个文件夹还没设片头：长按「片头」按钮可记住当前位置');
+      return;
+    }
+    await _player.seek(Duration(seconds: _skipStart));
+    _posN.value = Duration(seconds: _skipStart);
+    _showUi();
+    _toast('已跳到片头之后（${fmtDuration(Duration(seconds: _skipStart))}）');
+  }
+
+  /// 已经设过片尾就跳到"结束前 N 秒"；没设过提示长按记住
+  Future<void> _jumpSkipEnd() async {
+    if (_skipEnd <= 0) {
+      _toast('这个文件夹还没设片尾：长按「片尾」按钮可把当前位置记为片尾');
+      return;
+    }
+    if (_dur <= Duration.zero) {
+      _toast('还没拿到视频时长，过几秒再试');
+      return;
+    }
+    final target = _dur - Duration(seconds: _skipEnd);
+    if (target <= Duration.zero) return;
+    await _player.seek(target);
+    _posN.value = target;
+    _showUi();
+    _toast('已跳到片尾前 $_skipEnd 秒');
+  }
+
+  // ------------------------------------------------------------- 手机手势
+
+  void _flash(String s) {
+    _hintN.value = s;
+    _hintTimer?.cancel();
+    _hintTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) _hintN.value = '';
+    });
+  }
+
+  void _hDragStart() {
+    if (_layer != _Layer.none || _dur <= Duration.zero) return;
+    _seekN.value = _pos.inMilliseconds / _dur.inMilliseconds;
+  }
+
+  void _hDragUpdate(DragUpdateDetails d, double width) {
+    final base = _seekN.value;
+    if (base == null || width <= 0) return;
+    final f = clampDouble(base + d.delta.dx / width, 0, 1);
+    _seekN.value = f;
+    final t = Duration(milliseconds: (f * _dur.inMilliseconds).round());
+    _flash('${fmtDuration(t)} / ${fmtDuration(_dur)}');
+  }
+
+  Future<void> _hDragEnd() async {
+    final f = _seekN.value;
+    _seekN.value = null;
+    if (f == null) return;
+    await _seekToFraction(f);
+    _hintTimer?.cancel();
+    _hintN.value = '';
+  }
+
+  Future<void> _vDragStart(DragStartDetails d, double width) async {
+    if (_layer != _Layer.none) return;
+    if (d.localPosition.dx < width / 2) {
+      // 左半边：亮度
+      _volStart = null;
+      _volF = null;
+      _briStart = await SystemChannel.brightness() ?? 0.5;
+      if (mounted) _flash('亮度 ${(_briStart! * 100).round()}%');
+    } else {
+      // 右半边：系统媒体音量
+      _briStart = null;
+      final v = await SystemChannel.systemVolume();
+      if (!mounted) return;
+      if (v == null) {
+        _volStart = null;
+        _volF = null;
+        _flash('这台设备不允许改系统音量');
+        return;
+      }
+      _volStart = v.$1;
+      _volF = v.$1.toDouble();
+      _volMax = v.$2;
+      _flash('音量 ${(v.$1 * 100 / _volMax).round()}%');
+    }
+  }
+
+  void _vDragUpdate(DragUpdateDetails d, double height) {
+    final span = height <= 0 ? 320.0 : height;
+    final dy = d.delta.dy; // 向下为正 → 减小
+
+    final b = _briStart;
+    if (b != null) {
+      _briStart = clampDouble(b - dy / span, 0.03, 1.0);
+      _briTouched = true;
+      SystemChannel.setBrightness(_briStart!);
+      _flash('亮度 ${(_briStart! * 100).round()}%');
+      return;
+    }
+
+    final f = _volF;
+    if (f == null) return;
+    // 整屏高度划完 ≈ 走完 1.6 个音量满程，接近手机自带播放器的手感
+    final perStep = span / (_volMax * 1.6);
+    final next = clampDouble(f - dy / perStep, 0, _volMax.toDouble());
+    _volF = next;
+    final n = next.round();
+    if (n != _volStart) {
+      _volStart = n;
+      SystemChannel.setSystemVolume(n);
+      _flash('音量 ${(n * 100 / _volMax).round()}%');
+    }
+  }
+
+  void _vDragEnd() {
+    _briStart = null;
+    _volStart = null;
+    _volF = null;
+    _hintTimer?.cancel();
+    _hintN.value = '';
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -530,7 +691,9 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ------------------------------------------------------------- 按键
 
-  static const int _menuRows = 7; // 0列表 1模式 2倍速 3音量 4片头 5片尾 6关闭
+  // v1.7：面板从 7 行减到 5 行 —— 去掉了「音量」（手机用右侧上下滑、
+  // 电视上用音量键）和「关闭面板」（菜单键/返回键就能关，占一行纯浪费）。
+  static const int _menuRows = 5; // 0目录 1模式 2倍速 3片头 4片尾
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (_layer == _Layer.none) return _onPlayerKey(e);
@@ -584,7 +747,7 @@ class _PlayerPageState extends State<PlayerPage> {
     //   片头/片尾行 = 重置
     // 其余行短按即可
     if (isSelect(e)) {
-      final isHoldRow = _menuIndex == 2 || _menuIndex == 4 || _menuIndex == 5;
+      final isHoldRow = _menuIndex == 2 || _menuIndex == 3 || _menuIndex == 4;
       if (e is KeyDownEvent && isHoldRow) {
         _holdFired = false;
         _holdTimer?.cancel();
@@ -621,13 +784,11 @@ class _PlayerPageState extends State<PlayerPage> {
     if (isLeft(e)) {
       if (_menuIndex == 1) _modeStep(-1);
       if (_menuIndex == 2) _speedStep(-1);
-      if (_menuIndex == 3) _volumeBy(-5);
       return KeyEventResult.handled;
     }
     if (isRight(e)) {
       if (_menuIndex == 1) _modeStep(1);
       if (_menuIndex == 2) _speedStep(1);
-      if (_menuIndex == 3) _volumeBy(5);
       return KeyEventResult.handled;
     }
     if (isMenu(e)) {
@@ -684,24 +845,18 @@ class _PlayerPageState extends State<PlayerPage> {
         }
         break;
       case 3:
-        _volumeBy(5);
-        break;
-      case 4:
         if (long) {
           _resetSkipStart();
         } else {
           _markSkipStart();
         }
         break;
-      case 5:
+      case 4:
         if (long) {
           _resetSkipEnd();
         } else {
           _markSkipEnd();
         }
-        break;
-      case 6:
-        _closeLayer();
         break;
     }
   }
@@ -722,46 +877,81 @@ class _PlayerPageState extends State<PlayerPage> {
         body: Focus(
           autofocus: true,
           onKeyEvent: _onKey,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              if (_layer != _Layer.none) {
-                _closeLayer();
-              } else if (_ui) {
-                setState(() => _ui = false);
-                _hideTimer?.cancel();
-              } else {
-                _showUi();
-              }
-            },
-            child: Stack(
-              children: [
-                Positioned.fill(child: _surface()),
-                if (_buffering && _error == null)
-                  const Center(
-                    child: SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: CircularProgressIndicator(strokeWidth: 2.8),
+          child: LayoutBuilder(
+            builder: (context, box) => GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                if (_layer != _Layer.none) {
+                  _closeLayer();
+                } else if (_ui) {
+                  setState(() => _ui = false);
+                  _hideTimer?.cancel();
+                } else {
+                  _showUi();
+                }
+              },
+              // v1.7 手机手势。遥控器没有拖动事件，这几条对电视无影响。
+              onHorizontalDragStart: (_) => _hDragStart(),
+              onHorizontalDragUpdate: (d) => _hDragUpdate(d, box.maxWidth),
+              onHorizontalDragEnd: (_) => _hDragEnd(),
+              onVerticalDragStart: (d) => _vDragStart(d, box.maxWidth),
+              onVerticalDragUpdate: (d) => _vDragUpdate(d, box.maxHeight),
+              onVerticalDragEnd: (_) => _vDragEnd(),
+              child: Stack(
+                children: [
+                  Positioned.fill(child: _surface()),
+                  if (_buffering && _error == null)
+                    const Center(
+                      child: SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: CircularProgressIndicator(strokeWidth: 2.8),
+                      ),
                     ),
-                  ),
-                if (_error != null) _errorLayer(),
-                if (!_playing && !_buffering && _error == null)
-                  const Center(
-                    child: Icon(Icons.play_circle_fill,
-                        size: 88, color: Colors.white24),
-                  ),
-                if (_ui) _topBar(),
-                if (_ui) _bottomBar(),
-                if (_layer == _Layer.playlist) _playlistLayer(),
-                if (_layer == _Layer.menu) _menuLayer(),
-              ],
+                  if (_error != null) _errorLayer(),
+                  if (!_playing && !_buffering && _error == null)
+                    const Center(
+                      child: Icon(Icons.play_circle_fill,
+                          size: 88, color: Colors.white24),
+                    ),
+                  if (_ui) _topBar(),
+                  if (_ui) _bottomBar(),
+                  if (_layer == _Layer.playlist) _playlistLayer(),
+                  if (_layer == _Layer.menu) _menuLayer(),
+                  _hintLayer(),
+                ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+
+  /// 手势 / 快捷操作的中文提示（居中一块半透明胶囊）
+  Widget _hintLayer() => Positioned.fill(
+        child: IgnorePointer(
+          child: Center(
+            child: ValueListenableBuilder<String>(
+              valueListenable: _hintN,
+              builder: (context, s, _) => s.isEmpty
+                  ? const SizedBox.shrink()
+                  : Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 22, vertical: 13),
+                      decoration: BoxDecoration(
+                        color: alpha(Colors.black, 0.74),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: alpha(Colors.white, 0.14)),
+                      ),
+                      child: Text(s,
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                    ),
+            ),
+          ),
+        ),
+      );
 
   Widget _surface() {
     if (_error != null) return const ColoredBox(color: Colors.black);
@@ -893,6 +1083,8 @@ class _PlayerPageState extends State<PlayerPage> {
   Widget _bottomBar() {
     final compact = isCompact(context);
 
+    // 中间这一排 5 个是「播放操作」，永远居中：
+    // 上一集 / 后退 10 秒 / 播放暂停 / 前进 10 秒 / 下一集
     final transport = <Widget>[
       _CtlBtn(
         icon: Icons.skip_previous_rounded,
@@ -917,13 +1109,21 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
     ];
 
+    final sidePad = compact ? 12.0 : 28.0;
+    final gap = compact ? 6.0 : 10.0;
+    // 老手机横屏只有 480～540dp，9 个按钮一排会溢出。
+    // 极窄时左边「目录 / 设置」退成纯图标（它们本来就是列表和齿轮，
+    // 不会被误认成播放键）；右边「片头 / 片尾」保留文字，
+    // 因为需求里特别强调要和"上一集 / 下一集"区分开。
+    final narrow = MediaQuery.sizeOf(context).width < 560;
+
     return Positioned(
       bottom: 0,
       left: 0,
       right: 0,
       child: Container(
         padding: EdgeInsets.fromLTRB(
-            compact ? 12 : 28, compact ? 10 : 26, compact ? 12 : 28, compact ? 10 : 22),
+            sidePad, compact ? 10 : 24, sidePad, compact ? 10 : 18),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
@@ -934,77 +1134,90 @@ class _PlayerPageState extends State<PlayerPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 只有这一块跟着进度值重画，视频画面不参与
+            // 只有这一块跟着进度值重画，视频画面不参与。
+            // 拖动时把预览值也传进去，进度条会自己画一条"要去哪"的标记。
             ValueListenableBuilder<Duration>(
               valueListenable: _posN,
-              builder: (context, pos, _) => _ProgressBar(
-                pos: pos,
-                dur: _dur,
-                onSeek: _seekToFraction,
+              builder: (context, pos, _) => ValueListenableBuilder<double?>(
+                valueListenable: _seekN,
+                builder: (context, preview, __) => _ProgressBar(
+                  pos: pos,
+                  dur: _dur,
+                  preview: preview,
+                  onSeek: _seekToFraction,
+                ),
               ),
             ),
-            const SizedBox(height: 6),
-            if (compact) ...[
-              Row(
-                children: [
-                  ValueListenableBuilder<Duration>(
-                    valueListenable: _posN,
-                    builder: (context, pos, _) => Text(
-                      '${fmtDuration(pos)} / ${fmtDuration(_dur)}',
-                      style: const TextStyle(
-                          fontSize: 12.5, color: TvColors.textDim),
+            SizedBox(height: compact ? 4 : 6),
+            Row(
+              children: [
+                ValueListenableBuilder<Duration>(
+                  valueListenable: _posN,
+                  builder: (context, pos, _) => Text(
+                    '${fmtDuration(pos)} / ${fmtDuration(_dur)}',
+                    style: TextStyle(
+                        fontSize: compact ? 12.5 : 13,
+                        color: TvColors.textDim),
+                  ),
+                ),
+                const Spacer(),
+                Text(_fmtSpeed(_speed),
+                    style: TextStyle(
+                        fontSize: compact ? 12.5 : 13,
+                        color: TvColors.textDim)),
+              ],
+            ),
+            SizedBox(height: compact ? 4 : 8),
+
+            // v1.7 布局（用户指定）：
+            //   左：目录、设置         中：5 个播放键（居中）        右：片头、片尾
+            // 左右各 2 个按钮、宽度相等，所以中间那排在屏幕上真正居中。
+            // 「片头/片尾」是**跳位置**，和「上一集/下一集」（换文件）刻意分开：
+            // 图标不同（⇤ / ⇥ 对 ⏮ / ⏭），还带中文标签，配置过的话描边点亮。
+            Row(
+              children: [
+                _SideBtn(
+                  icon: Icons.format_list_bulleted_rounded,
+                  label: '目录',
+                  iconOnly: narrow,
+                  onTap: () => _openLayer(_Layer.playlist),
+                ),
+                SizedBox(width: gap),
+                _SideBtn(
+                  icon: Icons.tune_rounded,
+                  label: '设置',
+                  iconOnly: narrow,
+                  onTap: () => _openLayer(_Layer.menu),
+                ),
+                Expanded(
+                  child: Center(
+                    // 真的挤到放不下时整体等比缩小，绝不溢出屏幕
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: transport,
+                      ),
                     ),
                   ),
-                  const Spacer(),
-                  _CtlBtn(
-                    icon: Icons.format_list_bulleted_rounded,
-                    onTap: () => _openLayer(_Layer.playlist),
-                  ),
-                  _CtlBtn(
-                    icon: Icons.tune_rounded,
-                    onTap: () => _openLayer(_Layer.menu),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(_fmtSpeed(_speed),
-                      style: const TextStyle(
-                          fontSize: 13, color: TvColors.textDim)),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: transport,
-              ),
-            ] else
-              Row(
-                children: [
-                  ValueListenableBuilder<Duration>(
-                    valueListenable: _posN,
-                    builder: (context, pos, _) => Text(
-                      '${fmtDuration(pos)} / ${fmtDuration(_dur)}',
-                      style: const TextStyle(
-                          fontSize: 13, color: TvColors.textDim),
-                    ),
-                  ),
-                  const SizedBox(width: 18),
-                  _CtlBtn(
-                    icon: Icons.format_list_bulleted_rounded,
-                    tooltip: '目录列表',
-                    onTap: () => _openLayer(_Layer.playlist),
-                  ),
-                  _CtlBtn(
-                    icon: Icons.tune_rounded,
-                    tooltip: '播放设置',
-                    onTap: () => _openLayer(_Layer.menu),
-                  ),
-                  const Spacer(),
-                  ...transport,
-                  const SizedBox(width: 14),
-                  Text(_fmtSpeed(_speed),
-                      style: const TextStyle(
-                          fontSize: 13, color: TvColors.textDim)),
-                ],
-              ),
+                ),
+                _SideBtn(
+                  icon: Icons.first_page_rounded,
+                  label: '片头',
+                  active: _skipStart > 0,
+                  onTap: _jumpSkipStart,
+                  onLongPress: _markSkipStart,
+                ),
+                SizedBox(width: gap),
+                _SideBtn(
+                  icon: Icons.last_page_rounded,
+                  label: '片尾',
+                  active: _skipEnd > 0,
+                  onTap: _jumpSkipEnd,
+                  onLongPress: _markSkipEnd,
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1038,20 +1251,15 @@ class _PlayerPageState extends State<PlayerPage> {
         focused: _menuIndex == 2,
         onTap: _speedCycle,
       ),
-      _MenuRow(
-        icon: Icons.volume_up_rounded,
-        title: '音量',
-        value: '$_volume%',
-        hint: '← → 调整（上下键已改为切换视频）',
-        focused: _menuIndex == 3,
-        onTap: () => _volumeBy(5),
-      ),
+      // v1.7：原来这里还有「音量」和「关闭面板」两行，已按要求删掉。
+      //   音量：手机用右半边上下滑、电视用音量键，不用面板；
+      //   关闭：菜单键 / 返回键都能关，单占一行没必要。
       _MenuRow(
         icon: Icons.first_page_rounded,
         title: '跳过片头',
         value: _skipStart > 0 ? fmtDuration(Duration(seconds: _skipStart)) : '关闭',
         hint: '只对本文件夹生效 · OK 记住当前 · 长按重置',
-        focused: _menuIndex == 4,
+        focused: _menuIndex == 3,
         onTap: _markSkipStart,
         onLongPress: _resetSkipStart,
       ),
@@ -1060,17 +1268,9 @@ class _PlayerPageState extends State<PlayerPage> {
         title: '跳过片尾',
         value: _skipEnd > 0 ? '最后 ${_skipEnd}s' : '关闭',
         hint: '只对本文件夹生效 · OK 记住剩余 · 长按重置',
-        focused: _menuIndex == 5,
+        focused: _menuIndex == 4,
         onTap: _markSkipEnd,
         onLongPress: _resetSkipEnd,
-      ),
-      _MenuRow(
-        icon: Icons.close_rounded,
-        title: '关闭面板',
-        value: '',
-        hint: '解码：$_decoder',
-        focused: _menuIndex == 6,
-        onTap: _closeLayer,
       ),
     ];
 
@@ -1096,8 +1296,8 @@ class _PlayerPageState extends State<PlayerPage> {
             const Text('播放设置',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            const Text('↑↓ 选择 · OK 执行 · ← → 调值 · 菜单/返回 关闭',
-                style: TextStyle(fontSize: 12.5, color: TvColors.textDim)),
+            Text('↑↓ 选择 · OK 执行 · ← → 调值 · 菜单/返回 关闭 · 解码：$_decoder',
+                style: const TextStyle(fontSize: 12.5, color: TvColors.textDim)),
             const SizedBox(height: 16),
             Expanded(
               child: ListView(children: rows),
@@ -1110,8 +1310,10 @@ class _PlayerPageState extends State<PlayerPage> {
 
   Widget _playlistLayer() {
     final compact = isCompact(context);
+    // v1.7：目录列表从右边挪到左边（用户要求）——
+    // 左边进来顺手，也不会和右下角的"集数/进度"信息打架。
     return Positioned(
-      right: 0,
+      left: 0,
       top: 0,
       bottom: 0,
       child: Container(
@@ -1120,8 +1322,8 @@ class _PlayerPageState extends State<PlayerPage> {
             compact ? 12 : 18, compact ? 56 : 90, compact ? 12 : 18, 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.centerRight,
-            end: Alignment.centerLeft,
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
             colors: [alpha(Colors.black, 0.94), alpha(Colors.black, 0.55)],
           ),
         ),
@@ -1280,11 +1482,19 @@ class _MenuRow extends StatelessWidget {
 /// 进度条：触摸可点可拖；遥控靠左右键（不抢焦点，避免和其它按键打架）。
 /// 用 CustomPaint 画 —— Stack + FractionallySizedBox 在 loose 约束下尺寸不可靠。
 class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.pos, required this.dur, required this.onSeek});
+  const _ProgressBar({
+    required this.pos,
+    required this.dur,
+    required this.onSeek,
+    this.preview,
+  });
 
   final Duration pos;
   final Duration dur;
   final ValueChanged<double> onSeek;
+
+  /// 手势拖动中的目标进度（0–1）。null = 没在拖。
+  final double? preview;
 
   @override
   Widget build(BuildContext context) {
@@ -1292,6 +1502,7 @@ class _ProgressBar extends StatelessWidget {
     var frac = total <= 0 ? 0.0 : pos.inMilliseconds / total;
     if (frac < 0) frac = 0;
     if (frac > 1) frac = 1;
+    final pv = preview == null ? null : clampDouble(preview!, 0, 1);
 
     return LayoutBuilder(
       builder: (context, c) => GestureDetector(
@@ -1301,7 +1512,7 @@ class _ProgressBar extends StatelessWidget {
         child: SizedBox(
           width: c.maxWidth,
           height: 26,
-          child: CustomPaint(painter: _BarPainter(frac)),
+          child: CustomPaint(painter: _BarPainter(frac, pv)),
         ),
       ),
     );
@@ -1309,29 +1520,49 @@ class _ProgressBar extends StatelessWidget {
 }
 
 class _BarPainter extends CustomPainter {
-  const _BarPainter(this.frac);
+  const _BarPainter(this.frac, this.preview);
 
   final double frac;
+  final double? preview;
 
   @override
   void paint(Canvas canvas, Size size) {
     const radius = Radius.circular(3);
+    final y = size.height / 2;
+    // 拖动时按"要去的位置"画，松手才真跳
+    final shown = preview ?? frac;
+
     final track = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, size.height / 2 - 3, size.width, 6),
+      Rect.fromLTWH(0, y - 3, size.width, 6),
       radius,
     );
     canvas.drawRRect(track, Paint()..color = Colors.white24);
 
-    if (frac > 0) {
+    if (shown > 0) {
       final fill = RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, size.height / 2 - 3, size.width * frac, 6),
+        Rect.fromLTWH(0, y - 3, size.width * shown, 6),
         radius,
       );
-      canvas.drawRRect(fill, Paint()..color = TvColors.accent);
+      canvas.drawRRect(
+        fill,
+        Paint()..color = preview != null ? TvColors.focus : TvColors.accent,
+      );
+    }
+
+    // 拖动时在"原位置"留个空心点，能看出从哪拖到哪
+    if (preview != null) {
+      canvas.drawCircle(
+        Offset(size.width * frac, y),
+        4,
+        Paint()
+          ..color = Colors.white54
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
     }
 
     canvas.drawCircle(
-      Offset(size.width * frac, size.height / 2),
+      Offset(size.width * shown, y),
       7,
       Paint()..color = Colors.white,
     );
@@ -1339,19 +1570,21 @@ class _BarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BarPainter oldDelegate) =>
-      oldDelegate.frac != frac;
+      oldDelegate.frac != frac || oldDelegate.preview != preview;
 }
 
 class _CtlBtn extends StatelessWidget {
   const _CtlBtn({
     required this.icon,
     this.onTap,
+    this.onLongPress,
     this.big = false,
     this.tooltip,
   });
 
   final IconData icon;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   final bool big;
   final String? tooltip;
 
@@ -1365,6 +1598,7 @@ class _CtlBtn extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(40),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Container(
           width: size,
           height: size,
@@ -1384,5 +1618,80 @@ class _CtlBtn extends StatelessWidget {
     );
     if (tooltip == null) return btn;
     return Tooltip(message: tooltip!, child: btn);
+  }
+}
+
+/// 控制条两侧的小方按钮：目录 / 设置 / 片头 / 片尾。
+///
+/// 为什么要单独做一个样式：中间那排是圆形的"播放操作"，
+/// 两侧如果用同样的圆钮，用户根本分不清「片头」和「上一集」——
+/// 这正是需求里特别提醒要避免的误操作。
+/// 所以两侧一律"图标 + 中文标签"的圆角矩形，片头/片尾配置过还会描边点亮。
+class _SideBtn extends StatelessWidget {
+  const _SideBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.onLongPress,
+    this.active = false,
+    this.iconOnly = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+
+  /// 已配置（片头 / 片尾设过值）→ 描边点亮
+  final bool active;
+
+  /// 极窄屏时只画图标（省出宽度，避免控制条溢出）
+  final bool iconOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = isCompact(context);
+    final enabled = onTap != null;
+    return InkWell(
+      borderRadius: BorderRadius.circular(9),
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        height: compact ? 34 : 38,
+        padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
+        decoration: BoxDecoration(
+          color:
+              active ? alpha(TvColors.accent, 0.18) : alpha(Colors.white, 0.09),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(
+            color: active
+                ? alpha(TvColors.accent, 0.85)
+                : alpha(Colors.white, 0.10),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: compact ? 17 : 19,
+              color:
+                  enabled ? (active ? TvColors.accent : Colors.white) : Colors.white24,
+            ),
+            if (!iconOnly) ...[
+              SizedBox(width: compact ? 4 : 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: compact ? 11.5 : 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: enabled ? Colors.white : Colors.white24,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

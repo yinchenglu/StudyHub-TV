@@ -87,5 +87,9 @@ int naturalCompare(String a, String b) {
 /// 拿去做 List 下标或 int 变量会报类型错。
 int clampInt(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
+/// 浮点夹取。同样的道理：num.clamp 返回 num，赋给 double 变量会报类型错。
+double clampDouble(double v, double lo, double hi) =>
+    v < lo ? lo : (v > hi ? hi : v);
+
 /// 解码失败时给的替代文字（服务器常返回乱七八糟编码的目录名）
 String safeName(String s) => s.isEmpty ? '(未命名)' : s;

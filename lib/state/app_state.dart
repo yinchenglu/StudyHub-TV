@@ -170,15 +170,39 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 识别 StudyHub-TV / image / video / audio / download
+  /// 识别 StudyHub-TV / image / video / audio / download。
+  ///
+  /// v1.7 按用户要求改成明确的两段式：
+  ///   第一段：在**输入的地址**下找 StudyHub-TV 文件夹。
+  ///           直属子目录没有时，再下钻一层（地址/某目录/StudyHub-TV），
+  ///           最多看 12 个文件夹就收手 —— 连接阶段不能拖太久。
+  ///   第二段：在 StudyHub-TV 里面认 image / video / audio / download
+  ///           这些子目录，「图片」「视频」分区分别落到对应子目录。
+  /// 都认不到才退回"整个账号根目录"照旧浏览。
   Future<void> _detectLibrary() async {
     _base.clear();
 
-    // 1) 账号根目录里找 StudyHub-TV
+    // 1) 第一段：找 StudyHub-TV
     final root = await _safeList('');
-    final lib = _pickDir(root, kLibraryDirNames)?.path ?? '';
+    var lib = _pickDir(root, kLibraryDirNames)?.path ?? '';
 
-    // 2) 账号根目录本身就是媒体库（用户直接把共享指到了 StudyHub-TV）
+    if (lib.isEmpty) {
+      // 地址下面没有直接的 StudyHub-TV → 下钻一层找。
+      // 只扫目录、限制数量：几十个文件夹挨个 PROPFIND 会把连接拖到十几秒。
+      final dirs = root.where((e) => e.isDir).toList();
+      if (dirs.length <= 12) {
+        for (final d in dirs) {
+          final sub = await _safeList(d.path);
+          final hit = _pickDir(sub, kLibraryDirNames);
+          if (hit != null) {
+            lib = hit.path;
+            break;
+          }
+        }
+      }
+    }
+
+    // 2) 第二段：在 StudyHub-TV（或账号根目录本身）里认媒体子目录
     final libEntries = lib.isEmpty ? root : await _safeList(lib);
     final hasImage = _pickDir(libEntries, kImageDirNames) != null;
     final hasVideo = _pickDir(libEntries, kVideoDirNames) != null;

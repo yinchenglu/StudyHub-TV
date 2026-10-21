@@ -280,13 +280,13 @@ class _BrowserPanelState extends State<BrowserPanel> {
         _gap = compact ? _gapNarrow : _gapWide;
         _pad = compact ? _padNarrow : _padWide;
 
-        // 密度：0 大 / 1 中 / 2 小。
+        // 密度：0 大 / 1 中 / 2 小 / 3 特小（v1.7 加的，给手机用）。
         // 手机上的格子要明显小一档 —— 否则 360dp 宽只排得下 1 列，
         // 一屏看两张图，翻页翻到崩溃。
         final targets = compact
-            ? const [168.0, 126.0, 96.0]
-            : const [340.0, 268.0, 206.0];
-        final target = targets[clampInt(app.store.density, 0, 2)];
+            ? const [168.0, 126.0, 96.0, 74.0]
+            : const [340.0, 268.0, 206.0, 168.0];
+        final target = targets[clampInt(app.store.density, 0, 3)];
         _cols = clampInt(
           ((c.maxWidth - _pad * 2 + _gap) / (target + _gap)).floor(),
           1,

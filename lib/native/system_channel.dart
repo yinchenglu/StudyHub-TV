@@ -463,4 +463,73 @@ class SystemChannel {
       return (false, '$e');
     }
   }
+
+  // ------------------------------------------------------------ v1.7 新增
+  // 播放器手势用：屏幕亮度 与 系统媒体音量。
+  //
+  // 亮度改的是**本窗口**的 screenBrightness（原生侧注释有说明），
+  // 不改系统设置、不需要额外权限，退出播放器自动恢复。
+
+  /// 当前窗口亮度（0–1）。系统默认（-1）或读不到时按 0.5 起步。
+  static Future<double?> brightness() async {
+    if (!_isAndroid) return null;
+    try {
+      final v = await _ch.invokeMethod<double>('getBrightness');
+      if (v == null) return null;
+      if (v <= 0 || v > 1) return 0.5; // -1 = 跟随系统
+      return v;
+    } catch (e) {
+      debugPrint('读亮度失败：$e');
+      return null;
+    }
+  }
+
+  static Future<void> setBrightness(double v) async {
+    if (!_isAndroid) return;
+    try {
+      final c = v < 0.01 ? 0.01 : (v > 1 ? 1.0 : v);
+      await _ch.invokeMethod<void>('setBrightness', {'value': c});
+    } catch (e) {
+      debugPrint('设置亮度失败：$e');
+    }
+  }
+
+  /// 系统媒体音量：(当前值, 最大值)。读不到返回 null。
+  /// 恢复"跟随系统"亮度（-1）。
+  ///
+  /// 播放器里上下滑调过亮度之后，退出时必须调一次，否则窗口亮度会一直
+  /// 停在那个值上 —— 用户回到桌面发现屏幕变暗，会以为是系统坏了。
+  static Future<void> resetBrightness() async {
+    if (!_isAndroid) return;
+    try {
+      await _ch.invokeMethod<void>('setBrightness', {'value': -1.0});
+    } catch (e) {
+      debugPrint('恢复亮度失败：$e');
+    }
+  }
+
+  static Future<(int, int)?> systemVolume() async {
+    if (!_isAndroid) return null;
+    try {
+      final m = await _ch.invokeMethod<Map<dynamic, dynamic>>('systemVolume');
+      if (m == null) return null;
+      final cur = (m['cur'] as num?)?.toInt() ?? 0;
+      final max = (m['max'] as num?)?.toInt() ?? 15;
+      return (cur, max <= 0 ? 15 : max);
+    } catch (e) {
+      debugPrint('读系统音量失败：$e');
+      return null;
+    }
+  }
+
+  static Future<bool> setSystemVolume(int v) async {
+    if (!_isAndroid) return false;
+    try {
+      return await _ch.invokeMethod<bool>('setSystemVolume', {'value': v}) ??
+          false;
+    } catch (e) {
+      debugPrint('设置系统音量失败：$e');
+      return false;
+    }
+  }
 }

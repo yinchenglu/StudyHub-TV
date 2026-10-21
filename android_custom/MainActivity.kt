@@ -11,6 +11,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.tv.TvInputInfo
 import android.media.tv.TvInputManager
@@ -337,6 +338,87 @@ class MainActivity : FlutterActivity() {
                     mapOf("ok" to false, "msg" to (t.message ?: "失败"))
                 }
                 main.post { result.success(res) }
+            }
+
+            // ---------------- v1.7 新增：手势用的亮度 / 系统音量 ----------------
+            //
+            // 亮度改的是**本窗口**的 screenBrightness，不动系统设置：
+            //   * 不需要 WRITE_SETTINGS 权限（改系统亮度才需要，还得用户去系统里开）
+            //   * 退出播放器/退出 App 自动恢复，不会把用户手机亮度改坏
+            //   * 读出来是 -1 表示"跟随系统"，Dart 侧按 50% 起步
+            "getBrightness" -> main.post {
+                // 必须转 Double：Flutter 的 StandardMessageCodec 不认 Kotlin 的 Float，
+                // 直接回 Float 会在 Dart 侧抛 "Unsupported value"
+                //
+                // screenBrightness = -1 表示"跟随系统"（绝大多数设备打开页面时都是 -1）。
+                // 直接把 -1 交给 Dart，滑动手势的起点就是 -1，一拖就从最暗开始，
+                // 所以这里读系统的实际亮度值当起点。
+                var b = window.attributes.screenBrightness.toDouble()
+                if (b < 0) {
+                    b = try {
+                        Settings.System.getInt(
+                            contentResolver,
+                            Settings.System.SCREEN_BRIGHTNESS
+                        ) / 255.0
+                    } catch (t: Throwable) {
+                        0.5
+                    }
+                }
+                result.success(b.coerceIn(0.03, 1.0))
+            }
+
+            "setBrightness" -> {
+                val raw = call.argument<Double>("value") ?: 1.0
+                main.post {
+                    try {
+                        val lp = window.attributes
+                        // < 0 = 恢复"跟随系统"（退出播放器时调，别把亮度留在暗档）
+                        lp.screenBrightness =
+                            if (raw < 0) -1f else raw.toFloat().coerceIn(0.01f, 1.0f)
+                        window.attributes = lp
+                        result.success(lp.screenBrightness.toDouble())
+                    } catch (t: Throwable) {
+                        result.success(null)
+                    }
+                }
+            }
+
+            "systemVolume" -> main.post {
+                val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (am == null) {
+                    result.success(null)
+                } else {
+                    result.success(
+                        mapOf(
+                            "cur" to am.getStreamVolume(AudioManager.STREAM_MUSIC),
+                            "max" to am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+                        )
+                    )
+                }
+            }
+
+            "setSystemVolume" -> {
+                val raw = call.argument<Int>("value") ?: 0
+                main.post {
+                    val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                    if (am == null) {
+                        result.success(false)
+                    } else {
+                        try {
+                            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                            // flags = 0：不弹系统音量条（我们自己画）
+                            am.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                raw.coerceIn(0, max),
+                                0
+                            )
+                            result.success(true)
+                        } catch (t: Throwable) {
+                            // 个别电视 ROM 禁止普通应用改音量（抛 SecurityException）
+                            result.success(false)
+                        }
+                    }
+                }
             }
 
             else -> result.notImplemented()

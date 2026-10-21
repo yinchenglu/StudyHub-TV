@@ -26,6 +26,7 @@ class Store {
   static const _kShowNames = 'show_names';
   static const _kAutoNext = 'auto_next';
   static const _kStartSection = 'start_section';
+  static const _kStartMigrated = 'start_section_v17';
   static const _kDensity = 'grid_density';
   static const _kSlideshow = 'slideshow_sec';
   static const _kPlayMode = 'play_mode';
@@ -76,6 +77,14 @@ class Store {
     _accounts = list;
     if (_currentId != null && !_accounts.any((a) => a.id == _currentId)) {
       _currentId = _accounts.isEmpty ? null : _accounts.first.id;
+    }
+
+    // v1.7 一次性迁移：老版本默认进「图片」，升级后不改就还是一开就进图片。
+    // 用户要求默认改成「视频」，所以在第一次跑新版时把值统一成视频，
+    // 之后用户在设置里改了就当用户的选择，不再覆盖。
+    if (_p!.getBool(_kStartMigrated) != true) {
+      await _p!.setString(_kStartSection, Section.videos.name);
+      await _p!.setBool(_kStartMigrated, true);
     }
   }
 
@@ -158,12 +167,14 @@ class Store {
   bool get autoNext => _p!.getBool(_kAutoNext) ?? true;
   Future<void> setAutoNext(bool v) async => _p!.setBool(_kAutoNext, v);
 
-  /// 启动时默认打开哪个分区
+  /// 启动时默认打开哪个分区。
+  /// v1.7：默认从「图片」改成「视频」—— 用户主要拿它看剧，
+  /// 开机直接落到视频列表少按一次键。设置里改过的仍以设置为准。
   Section get startSection {
     final n = _p!.getString(_kStartSection);
     return Section.values.firstWhere(
       (s) => s.name == n,
-      orElse: () => Section.images,
+      orElse: () => Section.videos,
     );
   }
 
