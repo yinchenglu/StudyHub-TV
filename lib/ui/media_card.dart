@@ -38,80 +38,100 @@ class MediaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FocusFrame(
-      focused: focused,
-      onTap: onTap,
-      radius: 12,
-      padding: const EdgeInsets.all(3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _art(),
-                  if (entry.kind == MediaKind.video)
-                    const Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: _Badge(icon: Icons.play_arrow_rounded),
-                    ),
-                  if (entry.kind == MediaKind.audio)
-                    const Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: _Badge(icon: Icons.graphic_eq_rounded),
-                    ),
-                ],
+    return LayoutBuilder(builder: (context, c) {
+      // v1.8：图标和字号跟着卡片宽度缩。
+      // 以前文件夹图标写死 58dp，卡片被压到 90dp 宽时图标比卡片还大，
+      // 手机上看着就是"图标太大、一屏没几个"。
+      final w = c.maxWidth;
+      final iconSize = clampDouble(w * 0.34, 26, 58);
+      final nameSize = clampDouble(w * 0.048 + 8, 10.5, 14.5);
+      final subSize = clampDouble(w * 0.036 + 7, 8.5, 11);
+
+      return FocusFrame(
+        focused: focused,
+        onTap: onTap,
+        radius: 12,
+        padding: const EdgeInsets.all(3),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _art(w, iconSize),
+                    if (entry.kind == MediaKind.video)
+                      Positioned(
+                        right: w < 120 ? 4 : 8,
+                        bottom: w < 120 ? 4 : 8,
+                        child: _Badge(
+                          icon: Icons.play_arrow_rounded,
+                          size: w < 120 ? 13 : 18,
+                        ),
+                      ),
+                    if (entry.kind == MediaKind.audio)
+                      Positioned(
+                        right: w < 120 ? 4 : 8,
+                        bottom: w < 120 ? 4 : 8,
+                        child: _Badge(
+                          icon: Icons.graphic_eq_rounded,
+                          size: w < 120 ? 13 : 18,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (showName)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    entry.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: focused ? FontWeight.w700 : FontWeight.w500,
-                      color: focused ? TvColors.text : const Color(0xFFD7DEE5),
-                    ),
-                  ),
-                  if (!entry.isDir && entry.size > 0)
+            if (showName)
+              Padding(
+                padding: EdgeInsets.fromLTRB(w < 120 ? 5 : 8, 4, w < 120 ? 5 : 8, 3),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      fmtBytes(entry.size),
+                      entry.name,
                       maxLines: 1,
-                      style: const TextStyle(fontSize: 11, color: TvColors.textDim),
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: nameSize,
+                        fontWeight: focused ? FontWeight.w700 : FontWeight.w500,
+                        color: focused ? TvColors.text : const Color(0xFFD7DEE5),
+                      ),
                     ),
-                ],
+                    if (!entry.isDir && entry.size > 0)
+                      Text(
+                        fmtBytes(entry.size),
+                        maxLines: 1,
+                        style: TextStyle(
+                            fontSize: subSize, color: TvColors.textDim),
+                      ),
+                  ],
+                ),
               ),
-            ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+    });
   }
 
-  Widget _art() {
+  Widget _art(double w, double iconSize) {
     switch (entry.kind) {
       case MediaKind.folder:
         return Container(
           color: TvColors.card,
-          child: const Center(
-            child: Icon(Icons.folder_rounded, size: 58, color: Color(0xFFE8B84B)),
+          child: Center(
+            child: Icon(Icons.folder_rounded,
+                size: iconSize, color: const Color(0xFFE8B84B)),
           ),
         );
 
       case MediaKind.image:
         final r = ref;
-        if (r == null) return _placeholder(Icons.image_not_supported_outlined);
+        if (r == null) {
+          return _placeholder(Icons.image_not_supported_outlined, iconSize);
+        }
         return CachedNetworkImage(
           imageUrl: r.url,
           httpHeaders: r.headers,
@@ -122,12 +142,13 @@ class MediaCard extends StatelessWidget {
           // 而且电视用户根本注意不到 150ms 的渐显，只感觉到"慢"
           fadeInDuration: Duration.zero,
           placeholder: (_, __) => Container(color: TvColors.card),
-          errorWidget: (_, __, ___) => _placeholder(Icons.broken_image_outlined),
+          errorWidget: (_, __, ___) =>
+              _placeholder(Icons.broken_image_outlined, iconSize),
         );
 
       case MediaKind.video:
         final r = ref;
-        if (r == null) return _placeholder(Icons.movie_outlined);
+        if (r == null) return _placeholder(Icons.movie_outlined, iconSize);
         return FutureBuilder<File?>(
           future: ThumbCache.instance.get(
             key: thumbKey,
@@ -142,19 +163,21 @@ class MediaCard extends StatelessWidget {
                 f,
                 fit: BoxFit.cover,
                 cacheWidth: thumbWidth,
-                errorBuilder: (_, __, ___) => _placeholder(Icons.movie_outlined),
+                errorBuilder: (_, __, ___) =>
+                    _placeholder(Icons.movie_outlined, iconSize),
               );
             }
             if (snap.connectionState == ConnectionState.done) {
-              return _placeholder(Icons.movie_outlined);
+              return _placeholder(Icons.movie_outlined, iconSize);
             }
+            final s = clampDouble(w * 0.2, 14, 22);
             return Container(
               color: TvColors.card,
-              child: const Center(
+              child: Center(
                 child: SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2.4),
+                  width: s,
+                  height: s,
+                  child: const CircularProgressIndicator(strokeWidth: 2.4),
                 ),
               ),
             );
@@ -164,26 +187,29 @@ class MediaCard extends StatelessWidget {
       case MediaKind.audio:
         return Container(
           color: TvColors.card,
-          child: const Center(
-            child: Icon(Icons.music_note_rounded, size: 54, color: TvColors.accent),
+          child: Center(
+            child: Icon(Icons.music_note_rounded,
+                size: iconSize, color: TvColors.accent),
           ),
         );
 
       case MediaKind.other:
-        return _placeholder(Icons.insert_drive_file_outlined);
+        return _placeholder(Icons.insert_drive_file_outlined, iconSize);
     }
   }
 
-  Widget _placeholder(IconData icon) => Container(
+  Widget _placeholder(IconData icon, double size) => Container(
         color: TvColors.card,
-        child: Center(child: Icon(icon, size: 46, color: TvColors.textDim)),
+        child: Center(
+            child: Icon(icon, size: size * 0.8, color: TvColors.textDim)),
       );
 }
 
 class _Badge extends StatelessWidget {
-  const _Badge({required this.icon});
+  const _Badge({required this.icon, this.size = 18});
 
   final IconData icon;
+  final double size;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -192,6 +218,6 @@ class _Badge extends StatelessWidget {
           color: alpha(Colors.black, 0.55),
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Icon(icon, size: 18, color: Colors.white),
+        child: Icon(icon, size: size, color: Colors.white),
       );
 }

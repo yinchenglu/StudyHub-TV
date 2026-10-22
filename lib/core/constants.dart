@@ -4,10 +4,10 @@ library;
 const String kAppName = 'StudyHub TV';
 
 /// 界面左下角「设置 → 关于」里显示的版本
-const String kAppVersion = '1.7.0';
+const String kAppVersion = '1.8.0';
 
 /// pubspec.yaml 里的 version（去掉 +N 后要和上面一致）
-const String kPubspecVersion = '1.7.0+2010';
+const String kPubspecVersion = '1.8.0+2011';
 
 /// 项目主页（「关于」里点一下会提示这个地址）
 const String kRepoUrl = 'https://github.com/yinchenglu/StudyHub-TV';

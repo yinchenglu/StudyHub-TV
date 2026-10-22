@@ -460,16 +460,29 @@ class _PlayerPageState extends State<PlayerPage> {
     if (mounted) setState(() {});
   }
 
+  // ------------------------------------------------- 控制条上的片头 / 片尾按钮
+  //
+  // v1.8 语义（用户指定）：**点一下 = 记住当前位置，长按 = 清除这个记录**。
+  // 以前是"点 = 跳过去、长按 = 记住"，手机上长按本来就不好按，
+  // 而且设过之后每次打开都会自动跳过，不需要再手动跳一次。
+  //
+  // 和「上一个 / 下一个」区分开：那两个换的是**文件**（切集），
+  // 这两个记的是**位置**（同一集里从哪开始 / 到哪结束）。
+  // 图标也刻意不同（⏮ 是换集、⇤ 是位置），按钮还是"图标 + 中文标签"的方按钮。
+
   /// 记住「片头」= 当前播放位置（只对当前目录生效）
   Future<void> _markSkipStart() async {
     if (_pos.inSeconds < 3) {
-      _toast('现在才 0 秒，先往后拖一点再点「跳过片头」');
+      _toast('现在才 0 秒，先往后拖一点再点「片头」');
       return;
     }
+    final had = _skipStart > 0;
     await app.updateSetting(
         () => app.store.setSkipOf(_dir, start: _pos.inSeconds));
     if (mounted) setState(() {});
-    _toast('已记住：这个文件夹的视频从 ${fmtDuration(_pos)} 开始播');
+    _toast(had
+        ? '已改成从 ${fmtDuration(_pos)} 开始播（长按「片头」可取消）'
+        : '已记住：这个文件夹的视频从 ${fmtDuration(_pos)} 开始播（长按可取消）');
   }
 
   Future<void> _markSkipEnd() async {
@@ -488,55 +501,27 @@ class _PlayerPageState extends State<PlayerPage> {
     }
     await app.updateSetting(() => app.store.setSkipOf(_dir, end: remain));
     if (mounted) setState(() => _endReached = false);
-    _toast('已记住：这个文件夹的视频最后 ${fmtDuration(Duration(seconds: remain))} 自动跳过');
+    _toast('已记住：这个文件夹的视频最后 ${fmtDuration(Duration(seconds: remain))} 自动跳过（长按可取消）');
   }
 
   Future<void> _resetSkipStart() async {
+    if (_skipStart <= 0) {
+      _toast('这个文件夹本来就没设片头');
+      return;
+    }
     await app.updateSetting(() => app.store.setSkipOf(_dir, start: 0));
     if (mounted) setState(() {});
-    _toast('已重置这个文件夹的「跳过片头」');
+    _toast('已取消这个文件夹的片头跳过');
   }
 
   Future<void> _resetSkipEnd() async {
+    if (_skipEnd <= 0) {
+      _toast('这个文件夹本来就没设片尾');
+      return;
+    }
     await app.updateSetting(() => app.store.setSkipOf(_dir, end: 0));
     if (mounted) setState(() {});
-    _toast('已重置这个文件夹的「跳过片尾」');
-  }
-
-  // ------------------------------------------------- 控制条上的片头 / 片尾按钮
-  //
-  // 和「上一个 / 下一个」区分开：那两个是换**文件**（切集），
-  // 这两个是换**位置**（同一集里跳到片头之后 / 片尾之前）。
-  // 图标也刻意不同（⏮ 是换集、⇤ 是跳位置），按钮还带文字标签。
-
-  /// 已经设过片头就立刻跳过去；没设过就说清楚怎么设
-  Future<void> _jumpSkipStart() async {
-    if (_skipStart <= 0) {
-      _toast('这个文件夹还没设片头：长按「片头」按钮可记住当前位置');
-      return;
-    }
-    await _player.seek(Duration(seconds: _skipStart));
-    _posN.value = Duration(seconds: _skipStart);
-    _showUi();
-    _toast('已跳到片头之后（${fmtDuration(Duration(seconds: _skipStart))}）');
-  }
-
-  /// 已经设过片尾就跳到"结束前 N 秒"；没设过提示长按记住
-  Future<void> _jumpSkipEnd() async {
-    if (_skipEnd <= 0) {
-      _toast('这个文件夹还没设片尾：长按「片尾」按钮可把当前位置记为片尾');
-      return;
-    }
-    if (_dur <= Duration.zero) {
-      _toast('还没拿到视频时长，过几秒再试');
-      return;
-    }
-    final target = _dur - Duration(seconds: _skipEnd);
-    if (target <= Duration.zero) return;
-    await _player.seek(target);
-    _posN.value = target;
-    _showUi();
-    _toast('已跳到片尾前 $_skipEnd 秒');
+    _toast('已取消这个文件夹的片尾跳过');
   }
 
   // ------------------------------------------------------------- 手机手势
@@ -1205,16 +1190,19 @@ class _PlayerPageState extends State<PlayerPage> {
                   icon: Icons.first_page_rounded,
                   label: '片头',
                   active: _skipStart > 0,
-                  onTap: _jumpSkipStart,
-                  onLongPress: _markSkipStart,
+                  // v1.8：语义改成"点一下 = 记住当前位置，长按 = 清除"。
+                  // 以前是点=跳过去、长按=记住，手机上长按很容易误触还不直观；
+                  // 而且设过片头后本来就会自动跳过，不需要再手动跳一次。
+                  onTap: _markSkipStart,
+                  onLongPress: _resetSkipStart,
                 ),
                 SizedBox(width: gap),
                 _SideBtn(
                   icon: Icons.last_page_rounded,
                   label: '片尾',
                   active: _skipEnd > 0,
-                  onTap: _jumpSkipEnd,
-                  onLongPress: _markSkipEnd,
+                  onTap: _markSkipEnd,
+                  onLongPress: _resetSkipEnd,
                 ),
               ],
             ),

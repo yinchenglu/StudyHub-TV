@@ -45,7 +45,7 @@ class SettingsPanel extends StatelessWidget {
       ),
       TvListItem(
         title: '卡片大小',
-        subtitle: '一屏放多少张。字看不清楚就调大',
+        subtitle: '一屏放多少张。手机上选「小」或「特小」，一排能放 4～6 个',
         icon: Icons.grid_view_rounded,
         trailingText: densityLabels[clampInt(s.density, 0, 3)],
         onTap: () {

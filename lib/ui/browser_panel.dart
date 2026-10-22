@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -44,12 +46,23 @@ class _BrowserPanelState extends State<BrowserPanel> {
   double _extent = 200;
   String _lastCwd = '\u0000';
 
+  /// 单击延迟判定用。
+  ///
+  /// 手机上「双击内容区回根目录」和「单击打开」会打架：卡片自带 onTap，
+  /// 第一次点击就把它打开了，第二次点已经在新目录里，双击永远识别不到。
+  /// 所以在子目录里把单击延后 260ms —— 这段时间内来了第二次点击就判定双击，
+  /// 取消打开、改成回根目录。
+  ///
+  /// 在分区根目录里不加延迟（最常用的路径保持跟手）。
+  Timer? _tapTimer;
+
   final ScrollController _scroll = ScrollController();
 
   AppState get app => widget.app;
 
   @override
   void dispose() {
+    _tapTimer?.cancel();
     _scroll.dispose();
     super.dispose();
   }
@@ -136,6 +149,45 @@ class _BrowserPanelState extends State<BrowserPanel> {
   double _gap = _gapWide;
   double _pad = _padWide;
 
+  // ------------------------------------------------------------- 触摸点击
+
+  /// 是否已经在本分区根目录（没有"上一级"可回）
+  bool get _atRoot => app.cwd == app.currentBase;
+
+  /// 回到本分区根目录（手机上双击内容区触发）
+  void _goRoot() {
+    if (_atRoot) return;
+    _tapTimer?.cancel();
+    _tapTimer = null;
+    app.jumpToDepth(0);
+    setState(() => _index = 0);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  /// 卡片被点：根目录直接打开；子目录里等 260ms 看有没有第二下。
+  void _onCardTap(int i, RemoteEntry e) {
+    setState(() => _index = i);
+    widget.focusNode.requestFocus();
+
+    if (_atRoot) {
+      _open(e);
+      return;
+    }
+
+    if (_tapTimer?.isActive == true) {
+      // 第二下 → 双击，当作"回根目录"
+      _tapTimer!.cancel();
+      _tapTimer = null;
+      _goRoot();
+      return;
+    }
+
+    _tapTimer = Timer(const Duration(milliseconds: 260), () {
+      _tapTimer = null;
+      if (mounted) _open(e);
+    });
+  }
+
   // ------------------------------------------------------------- 打开
 
   Future<void> _open(RemoteEntry e) async {
@@ -172,6 +224,9 @@ class _BrowserPanelState extends State<BrowserPanel> {
     if (_lastCwd != app.cwd) {
       _lastCwd = app.cwd;
       _index = 0;
+      // 目录已经变了，上一轮待打开的条目就作废，别 260ms 后在新区里乱开
+      _tapTimer?.cancel();
+      _tapTimer = null;
       if (_scroll.hasClients) _scroll.jumpTo(0);
     }
 
@@ -277,60 +332,71 @@ class _BrowserPanelState extends State<BrowserPanel> {
     final compact = isCompact(context);
     return LayoutBuilder(
       builder: (context, c) {
-        _gap = compact ? _gapNarrow : _gapWide;
-        _pad = compact ? _padNarrow : _padWide;
+        // 按"短边"认手机：横屏时短边就是屏幕高度。
+        // 手机 360～430dp，电视 1080p 是 540dp、盒子 480dp，都不会误判。
+        final phone = MediaQuery.sizeOf(context).shortestSide < 480;
 
-        // 密度：0 大 / 1 中 / 2 小 / 3 特小（v1.7 加的，给手机用）。
-        // 手机上的格子要明显小一档 —— 否则 360dp 宽只排得下 1 列，
-        // 一屏看两张图，翻页翻到崩溃。
-        final targets = compact
-            ? const [168.0, 126.0, 96.0, 74.0]
+        _gap = (compact || phone) ? _gapNarrow : _gapWide;
+        _pad = (compact || phone) ? _padNarrow : _padWide;
+
+        // 密度：0 大 / 1 中 / 2 小 / 3 特小。
+        //
+        // v1.8 修正：以前用 isCompact（720dp）决定用哪套尺寸，但手机**横屏**
+        // 的宽度普遍是 640～900dp，全都不算 compact，于是还在用电视的
+        // 168dp 目标宽 —— 一排只有 2～3 个，用户调了"特小"也没用。
+        //
+        // 现在按"短边"认手机（见上），电视不会误伤，手机一把到位。
+        final targets = phone
+            ? const [190.0, 148.0, 118.0, 94.0]
             : const [340.0, 268.0, 206.0, 168.0];
-        final target = targets[clampInt(app.store.density, 0, 3)];
-        _cols = clampInt(
-          ((c.maxWidth - _pad * 2 + _gap) / (target + _gap)).floor(),
-          1,
-          12,
-        );
+        final minCols = phone ? const [3, 4, 5, 6] : const [2, 3, 4, 5];
+        final d = clampInt(app.store.density, 0, 3);
+        final target = targets[d];
+
+        var cols = ((c.maxWidth - _pad * 2 + _gap) / (target + _gap)).floor();
+        if (cols < minCols[d]) cols = minCols[d];
+        _cols = clampInt(cols, 1, 12);
+
         final cardW = (c.maxWidth - _pad * 2 - _gap * (_cols - 1)) / _cols;
-        final nameH = app.store.showNames ? (compact ? 42.0 : 50.0) : 0.0;
+        final nameH = app.store.showNames ? (phone ? 34.0 : 50.0) : 0.0;
         final artRatio = app.section == Section.images ? 0.74 : 0.62;
         _extent = cardW * artRatio + nameH + 6;
 
-        return GridView.builder(
-          controller: _scroll,
-          padding: EdgeInsets.fromLTRB(_pad, 4, _pad, 24),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: _cols,
-            crossAxisSpacing: _gap,
-            mainAxisSpacing: _gap,
-            mainAxisExtent: _extent,
-          ),
-          itemCount: items.length,
-          itemBuilder: (context, i) {
-            final e = items[i];
-            MediaRef? ref;
-            if (!e.isDir) {
-              try {
-                ref = app.ref(e.path);
-              } catch (_) {
-                ref = null;
+        return GestureDetector(
+          // 双击空白处也能回根目录（卡片上那一层由 _onCardTap 自己判定）
+          behavior: HitTestBehavior.translucent,
+          onDoubleTap: _goRoot,
+          child: GridView.builder(
+            controller: _scroll,
+            padding: EdgeInsets.fromLTRB(_pad, 4, _pad, 24),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: _cols,
+              crossAxisSpacing: _gap,
+              mainAxisSpacing: _gap,
+              mainAxisExtent: _extent,
+            ),
+            itemCount: items.length,
+            itemBuilder: (context, i) {
+              final e = items[i];
+              MediaRef? ref;
+              if (!e.isDir) {
+                try {
+                  ref = app.ref(e.path);
+                } catch (_) {
+                  ref = null;
+                }
               }
-            }
-            return MediaCard(
-              entry: e,
-              focused: widget.focusNode.hasFocus && i == _index,
-              showName: app.store.showNames,
-              thumbKey: app.thumbKey(e.path),
-              thumbWidth: app.store.thumbWidth,
-              ref: ref,
-              onTap: () {
-                setState(() => _index = i);
-                widget.focusNode.requestFocus();
-                _open(e);
-              },
-            );
-          },
+              return MediaCard(
+                entry: e,
+                focused: widget.focusNode.hasFocus && i == _index,
+                showName: app.store.showNames,
+                thumbKey: app.thumbKey(e.path),
+                thumbWidth: app.store.thumbWidth,
+                ref: ref,
+                onTap: () => _onCardTap(i, e),
+              );
+            },
+          ),
         );
       },
     );
