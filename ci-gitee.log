@@ -1,0 +1,21 @@
+== 令牌注入检查 ==
+secrets.GITEE_TOKEN 长度 = 32
+vars.GITEE_TOKEN 长度 = 0
+
+→ 已读到 GITEE_TOKEN（32 个字符）
+→ 校验令牌
+  Gitee 账号：yin-cheng-lu
+→ 使用指定仓库 yin-cheng-lu/StudyHub-TV
+  已存在：yin-cheng-lu/StudyHub-TV（私有=False）
+  仓库：yin-cheng-lu/StudyHub-TV
+→ 推分支 main（源：refs/remotes/origin/main）和标签
+→ 处理 Gitee 发行版 v1.8.0（本次由 v1.8.0 标签触发）
+  已创建发行版 #1228824
+  上传 StudyHub-TV-arm64.apk（14.7 MB）
+    完成，用时 740 秒
+    -> https://gitee.com/yin-cheng-lu/StudyHub-TV/releases/download/v1.8.0/StudyHub-TV-arm64.apk
+  上传 StudyHub-TV-armv7.apk（14.1 MB）
+    完成，用时 457 秒
+    -> https://gitee.com/yin-cheng-lu/StudyHub-TV/releases/download/v1.8.0/StudyHub-TV-armv7.apk
+  回读确认：2 个附件都在
+✔ Gitee 同步完成：https://gitee.com/yin-cheng-lu/StudyHub-TV/releases/tag/v1.8.0
