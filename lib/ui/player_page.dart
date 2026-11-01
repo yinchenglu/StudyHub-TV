@@ -86,6 +86,20 @@ class _PlayerPageState extends State<PlayerPage> {
   /// 片尾只触发一次
   bool _endReached = false;
 
+  // ------------------------------------------------------- v1.8.1 随机播放
+  //
+  // 原来的随机只做了「播完自动下一集」这一条路径，遥控器上下键走的还是
+  // 列表顺序，用户看着就是「随机没生效」。
+  //
+  // 现在的做法：
+  //   · _bag  = 洗牌袋。本目录所有下标打乱后排队，抽完一轮才重洗，
+  //             一轮之内绝不重复（比纯 Random 乱撞舒服得多）。
+  //   · _hist = 随机历史栈。随机跳过的每一个都记下来，
+  //             上键可以沿着原路退回去，不会变成"又一个随机"。
+  final math.Random _rng = math.Random();
+  List<int> _bag = <int>[];
+  final List<int> _hist = <int>[];
+
   /// 每次打开新文件 +1，用来作废上一部片子还在跑的"跳片头"循环
   int _openToken = 0;
 
@@ -356,15 +370,14 @@ class _PlayerPageState extends State<PlayerPage> {
         setState(() => _endReached = false);
         break;
       case PlayMode.shuffle:
-        if (widget.files.length == 1) {
+        final n = _shuffleNext();
+        if (n == null) {
+          // 只有一个文件：原地重播
           _player.seek(Duration.zero);
           _player.play();
+          _posN.value = Duration.zero;
+          setState(() => _endReached = false);
         } else {
-          var n = _index;
-          final r = math.Random();
-          while (n == _index) {
-            n = r.nextInt(widget.files.length);
-          }
           _playAt(n);
         }
         break;
@@ -374,18 +387,66 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  void _playAt(int i) {
+  // --------------------------------------------------- 随机播放（洗牌袋）
+
+  /// 重洗一轮：排除当前正在播的这一条，避免刚洗完又抽到自己
+  void _refillBag() {
+    _bag = List<int>.generate(widget.files.length, (i) => i)..shuffle(_rng);
+    _bag.removeWhere((e) => e == _index);
+  }
+
+  /// 取随机下一条；只有一个文件时返回 null（交给调用方原地重播）
+  int? _shuffleNext() {
+    if (widget.files.length <= 1) return null;
+    // 当前这条永远不进候选（放进来就等于"随机到原地"，用户会以为没跳）
+    _bag.removeWhere((e) => e == _index);
+    if (_bag.isEmpty) _refillBag();
+    if (_bag.isEmpty) return null;
+    return _bag.removeAt(0);
+  }
+
+  /// 随机模式下的「上一个」：先按原路退回，没历史了才随机挑一个
+  void _shufflePrev() {
+    while (_hist.isNotEmpty) {
+      final p = _hist.removeLast();
+      if (p >= 0 && p < widget.files.length && p != _index) {
+        // record: false —— 回退本身不再入栈，否则连按上键会在两条之间来回弹
+        _playAt(p, record: false);
+        return;
+      }
+    }
+    final n = _shuffleNext();
+    if (n != null) _playAt(n);
+  }
+
+  void _playAt(int i, {bool record = true}) {
     if (i < 0 || i >= widget.files.length) return;
+    // 随机模式记一笔历史，上键才能原路返回
+    if (record && _mode == PlayMode.shuffle && i != _index) {
+      _hist.add(_index);
+      if (_hist.length > 300) _hist.removeAt(0);
+    }
     setState(() => _index = i);
     _open();
   }
 
   void _next() {
+    if (widget.files.isEmpty) return;
+    if (_mode == PlayMode.shuffle) {
+      final n = _shuffleNext();
+      if (n != null) _playAt(n);
+      return;
+    }
     if (_index + 1 >= widget.files.length) return;
     _playAt(_index + 1);
   }
 
   void _prev() {
+    if (widget.files.isEmpty) return;
+    if (_mode == PlayMode.shuffle) {
+      _shufflePrev();
+      return;
+    }
     if (_index <= 0) return;
     _playAt(_index - 1);
   }
@@ -699,8 +760,12 @@ class _PlayerPageState extends State<PlayerPage> {
       return KeyEventResult.handled;
     }
     // v1.6：上下键改成切上一个/下一个视频（音量挪进播放面板）
+    // v1.8.1：随机模式跟着随机走，别再卡在"已经是第一个/最后一个"
+    final shuffle = _mode == PlayMode.shuffle;
     if (isUp(e)) {
-      if (_index > 0) {
+      if (shuffle) {
+        _prev();
+      } else if (_index > 0) {
         _prev();
       } else {
         _toast('已经是第一个了');
@@ -708,7 +773,9 @@ class _PlayerPageState extends State<PlayerPage> {
       return KeyEventResult.handled;
     }
     if (isDown(e)) {
-      if (_index + 1 < widget.files.length) {
+      if (shuffle) {
+        _next();
+      } else if (_index + 1 < widget.files.length) {
         _next();
       } else {
         _toast('已经是最后一个了');
@@ -1073,7 +1140,8 @@ class _PlayerPageState extends State<PlayerPage> {
     final transport = <Widget>[
       _CtlBtn(
         icon: Icons.skip_previous_rounded,
-        onTap: _index > 0 ? _prev : null,
+        // 随机模式下永远有"上一个"（历史回退 / 随机挑）
+        onTap: _mode == PlayMode.shuffle || _index > 0 ? _prev : null,
       ),
       _CtlBtn(
         icon: Icons.replay_10_rounded,
@@ -1090,7 +1158,10 @@ class _PlayerPageState extends State<PlayerPage> {
       ),
       _CtlBtn(
         icon: Icons.skip_next_rounded,
-        onTap: _index + 1 < widget.files.length ? _next : null,
+        onTap: _mode == PlayMode.shuffle ||
+                _index + 1 < widget.files.length
+            ? _next
+            : null,
       ),
     ];
 
